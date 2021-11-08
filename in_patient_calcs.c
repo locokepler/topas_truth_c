@@ -71,6 +71,19 @@ scatter* new_scatter_old(vec3* vector, double deposited) {
 	return new;
 }
 
+event* duplicate_event(event* source) {
+	event* new_event = (event*)malloc(sizeof(event));
+	new_event->number		= source->number;
+	new_event->energy		= source->energy;
+	new_event->depoisted	= source->depoisted;
+	new_event->location		= vec_copy(source->location);
+	new_event->tof			= source->tof;
+	new_event->particle		= source->particle;
+	strcpy(new_event->orgin, source->orgin);
+	new_event->id			= source->id;
+	return new_event;
+}
+
 // frees scatter malloc
 void* delete_scatter(void* in) {
 	if (in == NULL) {
@@ -86,7 +99,7 @@ void* delete_event(void* in) {
 	if (in == NULL) {
 		return NULL;
 	}
-	free(((event*)in)->location);
+	free(((event*)in)->location); // frees the allocated vector
 	free(in);
 	return NULL;
 }
@@ -135,6 +148,10 @@ llist* load_history(FILE* source, event* (*f)(FILE*)) {
 			return history;
 		}
 	}
+	// make a new copy of the event in previous event for storing
+	// means it will continue pointing right as otherwise it can
+	// point to the history that got freed
+	previous_event = duplicate_event(previous_event);
 	return history;
 }
 
@@ -842,6 +859,13 @@ scatter** find_endpoints_2hist(llist* detector_history, double energy_percent) {
 	llist* scat_list1 = build_scatters(detector_history, first_id);
 	llist* scat_list2 = build_scatters(detector_history, second_id);
 	if ((scat_list1 == NULL) || (scat_list2 == NULL)) {
+		if (scat_list1 == NULL) {
+			fmap(scat_list2, delete_scatter);
+			delete_list(scat_list2);
+		} else {
+			fmap(scat_list1, delete_scatter);
+			delete_list(scat_list1);
+		}
 		return NULL;
 	}
 	// run the actual finding of endpoint 1
@@ -851,14 +875,18 @@ scatter** find_endpoints_2hist(llist* detector_history, double energy_percent) {
 
 
 	if ((endpoint1 == NULL) || (endpoint2 == NULL)) {
+		fmap(scat_list1, delete_scatter);
+		fmap(scat_list2, delete_scatter);
+		delete_list(scat_list1);
+		delete_list(scat_list2);
 		return NULL;
 	}
 
 	// copy the two endpoints to new scatter structures (allows freeing of
 	// scatter lists)
 
-	endpoint1 = new_scatter_old(endpoint1->loc, endpoint1->deposit);
-	endpoint2 = new_scatter_old(endpoint2->loc, endpoint2->deposit);
+	scatter *first_endpoint = new_scatter_old(endpoint1->loc, endpoint1->deposit);
+	scatter *second_endpoint = new_scatter_old(endpoint2->loc, endpoint2->deposit);
 
 	// free the old list of scatters:
 	fmap(scat_list1, delete_scatter);
@@ -869,8 +897,8 @@ scatter** find_endpoints_2hist(llist* detector_history, double energy_percent) {
 
 	// make an array of the two new scatters to be sent out of the function
 	scatter** return_vals = (scatter**)malloc(2 * sizeof(scatter*));
-	return_vals[0] = endpoint1;
-	return_vals[1] = endpoint2;
+	return_vals[0] = first_endpoint;
+	return_vals[1] = second_endpoint;
 	return return_vals;
 }
 
@@ -883,6 +911,9 @@ scatter** find_endpoints_2hist(llist* detector_history, double energy_percent) {
  */
 double first_scat_miss(scatter** endpoints, vec3* annh_loc) {
 	if ((endpoints == NULL) || (annh_loc == NULL)) {
+		return -1.;
+	}
+	if ((endpoints[0] == NULL) || (endpoints[1] == NULL)) {
 		return -1.;
 	}
 	// find the scattering point of the first scatter
@@ -1045,8 +1076,8 @@ int main(int argc, char **argv) {
 				vec3* annh_loc = find_annihilation_point(history);
 				double miss_dist = first_scat_miss(endpoints, annh_loc);
 				if (endpoints != NULL) {
-					delete_scatter(endpoints[0]);
-					delete_scatter(endpoints[1]);
+					// delete_scatter(endpoints[0]);
+					// delete_scatter(endpoints[1]);
 					free(endpoints);
 				}
 
