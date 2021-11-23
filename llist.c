@@ -40,7 +40,7 @@ void* get_value(llist* list, unsigned int id) {
 }
 
 // adds a piece of data to the end of a list
-llist* add_to_bottom(llist* list, void* data) {
+llist* rec_add_to_bottom(llist* list, void* data) {
 	// does the list even exist yet?
 	if (list == NULL) {
 		// ok time to make a list
@@ -59,6 +59,32 @@ llist* add_to_bottom(llist* list, void* data) {
 	new_tail->data = data;
 	list->down = new_tail;
 	return list_head(list);
+}
+
+// lets write a non-recursive add_to_bottom
+llist* iter_add_to_bottom(llist* list, void* data) {
+	llist* penultimate = list;
+	for (llist* work = list; work != NULL; work = work->down) {
+		penultimate = work;
+	}
+	// now at the bottom of the list
+	llist* new_tail = (llist*)malloc(sizeof(llist));
+	new_tail->up = penultimate;
+	new_tail->data = data;
+	new_tail->down = NULL;
+	if (penultimate != NULL) {
+		penultimate->down = new_tail;
+	}
+	if (list != NULL) {
+		return list;
+	} else {
+		return new_tail;
+	}
+}
+
+// adds a piece of data to the end of a list
+llist* add_to_bottom(llist* list, void* data) {
+	return iter_add_to_bottom(list, data);
 }
 
 int rec_delete_list(llist* list) {

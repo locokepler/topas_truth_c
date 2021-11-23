@@ -34,4 +34,7 @@ double vec_dist(vec3* a, vec3* b);
 // makes a new copy of a vector
 vec3* vec_copy(vec3* a);
 
+// prints a vector as the three values
+void vec_print(vec3* a, FILE* output);
+
 #endif

@@ -310,16 +310,14 @@ vec3* find_annihilation_point(llist *history) {
  * given point. The distance is how far the minimum distance is.
  */
 double line_to_dot_dist(vec3* start, vec3* end, vec3* point) {
-	vec3* num_first_term = vec_sub(end, start);
+	vec3* num_first_term = vec_sub(start, end);
 	vec3* num_sec_term = vec_sub(start, point);
-	vec3* denom_vec = vec_sub(end, start);
-	vec3* num_cross = vec_cross(num_first_term, num_sec_term);
-	double numerator = vec_mag(num_cross);
-	double denomenator = vec_mag(denom_vec);
+	// vec3* denom_vec = vec_sub(end, start);
+	double numerator = vec_mag(vec_cross(num_first_term, num_sec_term));
+	double denomenator = vec_mag(num_first_term);
 	free(num_first_term);
 	free(num_sec_term);
-	free(denom_vec);
-	free(num_cross);
+	// free(denom_vec);
 	return numerator / denomenator;
 }
 
@@ -1082,7 +1080,10 @@ int main(int argc, char **argv) {
 				}
 
 				fprintf(out_in_patient, "%f, ", miss_dist);
-				fprintf(out_in_patient, "%f, %f\n", first_scat_hypot, second_scat_hypot);
+				// fprintf(out_in_patient, "%f, %f\n", first_scat_hypot, second_scat_hypot);
+				vec_print(endpoints[0]->loc, out_in_patient);
+				vec_print(endpoints[1]->loc, out_in_patient);
+				fprintf(out_in_patient, "\n");
 			}
 
 		} else {

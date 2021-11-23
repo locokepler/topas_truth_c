@@ -1,5 +1,6 @@
 #include <math.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include "vector_ops.h"
 
 // defines a new 3-vector
@@ -92,4 +93,9 @@ vec3* vec_copy(vec3* a) {
 		return NULL;
 	}
 	return three_vec(a->x, a->y, a->z);
+}
+
+// prints a vector as the three values
+void vec_print(vec3* a, FILE* output) {
+	fprintf(output, "%f, %f, %f", a->x, a->y, a->z);
 }
