@@ -1,6 +1,8 @@
 #ifndef vector_ops_h
 #define vector_ops_h
 
+#include <stdio.h>
+
 typedef struct vec3_ {
 	double x;
 	double y;

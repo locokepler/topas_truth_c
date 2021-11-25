@@ -10,6 +10,8 @@
 #define COMP_INT 1667457891
 #define ELECTRON_MASS 510.999
 
+#define READ_DEBUG 0
+#define GENERAL_DEBUG 0
 
   
 // reads a line from the source file as an event
@@ -29,15 +31,15 @@ event* read_line(FILE* source) {
 
 	int worked;
 
-	fscanf(source, "%u", &numb);
-	fscanf(source, "%lf", &energy);
-	fscanf(source, "%lf", &deposit);
-	fscanf(source, "%lf", &x);
-	fscanf(source, "%lf", &y);
-	fscanf(source, "%lf", &z);
-	fscanf(source, "%lf", &tof);
-	fscanf(source, "%i", &particle);
-	fscanf(source, "%s", origin);
+	worked = fscanf(source, "%u", &numb);
+	worked = fscanf(source, "%lf", &energy);
+	worked = fscanf(source, "%lf", &deposit);
+	worked = fscanf(source, "%lf", &x);
+	worked = fscanf(source, "%lf", &y);
+	worked = fscanf(source, "%lf", &z);
+	worked = fscanf(source, "%lf", &tof);
+	worked = fscanf(source, "%i", &particle);
+	worked = fscanf(source, "%s", origin);
 	worked = fscanf(source, "%i", &count);
 
 	if (worked == EOF) {
@@ -58,6 +60,10 @@ event* read_line(FILE* source) {
 	strcpy(new_event->orgin, origin);
 	new_event->id		= count;
 
+	// if (READ_DEBUG) {
+	// 	print_event((void*)new_event);
+	// }
+
 	return new_event;
 }
 
@@ -69,6 +75,19 @@ scatter* new_scatter_old(vec3* vector, double deposited) {
 	new->eng_uncert = -1.;
 	new->space_uncert = -1.;
 	return new;
+}
+
+scatter* new_scatter(vec3* vector, double deposit, double eng_uncert, double space_uncert) {
+	scatter* new = (scatter*)malloc(sizeof(scatter));
+	new->deposit = deposit;
+	new->eng_uncert = eng_uncert;
+	new->space_uncert = space_uncert;
+	new->loc = vector;
+	return new;
+}
+
+scatter* copy_scatter(scatter* a) {
+	return new_scatter(vec_copy(a->loc), a->deposit, a->eng_uncert, a->space_uncert);
 }
 
 event* duplicate_event(event* source) {
@@ -135,6 +154,9 @@ llist* load_history(FILE* source, event* (*f)(FILE*)) {
 		previous_event = f(source);
 		if (previous_event == NULL) {
 			// probably at EOF, in any case we need to be done
+			if (GENERAL_DEBUG) {
+				printf("NULL event reached, ending\n");
+			}
 			return NULL;
 		}
 	} else {
@@ -145,6 +167,10 @@ llist* load_history(FILE* source, event* (*f)(FILE*)) {
 		previous_event = f(source);
 		if (previous_event == NULL) {
 			// EOF reached
+			if (GENERAL_DEBUG) {
+				printf("NULL event reached, ending.\n");
+				printf("History number %i\n", history_num);
+			}
 			return history;
 		}
 	}
@@ -152,6 +178,9 @@ llist* load_history(FILE* source, event* (*f)(FILE*)) {
 	// means it will continue pointing right as otherwise it can
 	// point to the history that got freed
 	previous_event = duplicate_event(previous_event);
+	if (GENERAL_DEBUG) {
+		printf("History number %i\n", history_num);
+	}
 	return history;
 }
 
@@ -451,8 +480,8 @@ int test_expected_energy() {
  * scatters. If a scatter orientation has a closer energy to 511. keV then that
  * orientation is kept. If not it is ignored. Then the next orientation it run.
  */
-scatter* scattering_iterator(llist* history, double energy_percent) {
-	if (history == NULL) {
+scatter* scattering_iterator(llist* scatter_list, double energy_percent) {
+	if (scatter_list == NULL) {
 		fprintf(stderr, "scattering_iterator: no history given\n");
 		return NULL;
 	}
@@ -462,7 +491,7 @@ scatter* scattering_iterator(llist* history, double energy_percent) {
 	// the current best find scatter
 	scatter* best_scatter = NULL;
 	// length of the scatter list
-	int list_len = list_length(history);
+	int list_len = list_length(scatter_list);
 
 	if (list_len == 1) {
 		// only 1 scatter exists, return it
@@ -484,8 +513,8 @@ scatter* scattering_iterator(llist* history, double energy_percent) {
 	scatter** locations = (scatter**)malloc(list_len * sizeof(scatter*));
 	for (int i = 0; i < list_len; i++)
 	{
-		locations[i] = (scatter*)history->data;
-		history = history->down;
+		locations[i] = (scatter*)scatter_list->data;
+		scatter_list = scatter_list->down;
 	}
 	
 
@@ -506,6 +535,13 @@ scatter* scattering_iterator(llist* history, double energy_percent) {
 					// check if the hypothesis is better than previous
 					if (fabs(hypoth - ELECTRON_MASS) < fabs(best_find - ELECTRON_MASS)) {
 						// the current hypthesis is better than the previous best
+						if (GENERAL_DEBUG) {
+							printf("Scattering Iterator: new best scatter found:\n");
+							printf("%f keV at ", hypoth);
+							vec_print(locations[first]->loc, stdout);
+							printf("\n");
+						}
+
 						second_best = best_find;
 						best_find = hypoth;
 						best_scatter = locations[first];
@@ -607,6 +643,12 @@ scatter* multi_gamma_iterator(llist* history1, llist* history2, double energy_pe
 					// check if the hypothesis is better than previous
 					if (fabs(hypoth - ELECTRON_MASS) < fabs(best_find - ELECTRON_MASS)) {
 						// the current hypthesis is better than the previous best
+						if (GENERAL_DEBUG) {
+							printf("2 hist Scattering Iterator: new best scatter found:\n");
+							printf("%f keV at ", hypoth);
+							vec_print(scatters1[j]->loc, stdout);
+							printf("\n");
+						}
 						second_best = best_find;
 						best_find = hypoth;
 						best_scatter = scatters1[j];
@@ -627,6 +669,11 @@ scatter* multi_gamma_iterator(llist* history1, llist* history2, double energy_pe
 	// done iterating, now have the best scatter found in the list
 	if (fabs(best_find - ELECTRON_MASS) < (energy_percent * ELECTRON_MASS)) {
 		// the result was within the energy cut
+		if (GENERAL_DEBUG) {
+			printf("multi_gamma_iterator: best scatter solution found at %f kev at:\n", best_find);
+			vec_print(best_scatter->loc, stdout);
+			printf("\n");
+		}
 		return best_scatter;
 	}
 	// no result found within the energy cutoff
@@ -880,11 +927,19 @@ scatter** find_endpoints_2hist(llist* detector_history, double energy_percent) {
 		return NULL;
 	}
 
+	if (GENERAL_DEBUG) {
+		printf("find_endpoints_2hist: scatters found at:\n");
+		vec_print(endpoint1->loc, stdout);
+		printf("\n");
+		vec_print(endpoint2->loc, stdout);
+		printf("\n");
+	}
+
 	// copy the two endpoints to new scatter structures (allows freeing of
 	// scatter lists)
 
-	scatter *first_endpoint = new_scatter_old(endpoint1->loc, endpoint1->deposit);
-	scatter *second_endpoint = new_scatter_old(endpoint2->loc, endpoint2->deposit);
+	scatter *first_endpoint = copy_scatter(endpoint1);
+	scatter *second_endpoint = copy_scatter(endpoint2);
 
 	// free the old list of scatters:
 	fmap(scat_list1, delete_scatter);
@@ -897,6 +952,17 @@ scatter** find_endpoints_2hist(llist* detector_history, double energy_percent) {
 	scatter** return_vals = (scatter**)malloc(2 * sizeof(scatter*));
 	return_vals[0] = first_endpoint;
 	return_vals[1] = second_endpoint;
+	if (GENERAL_DEBUG) {
+		printf("find_endpoints_2hist: returning scatters found at:\n");
+		vec_print(return_vals[0]->loc, stdout);
+		printf("\n");
+		vec_print(return_vals[1]->loc, stdout);
+		// vec_print(first_endpoint->loc, stdout);
+		// printf("\n");
+		// vec_print(second_endpoint->loc, stdout);
+		
+		printf("\n");
+	}
 	return return_vals;
 }
 
@@ -1073,17 +1139,17 @@ int main(int argc, char **argv) {
 					// now we need to find the distance by which the endpoints miss
 				vec3* annh_loc = find_annihilation_point(history);
 				double miss_dist = first_scat_miss(endpoints, annh_loc);
-				if (endpoints != NULL) {
-					// delete_scatter(endpoints[0]);
-					// delete_scatter(endpoints[1]);
-					free(endpoints);
-				}
 
 				fprintf(out_in_patient, "%f, ", miss_dist);
-				// fprintf(out_in_patient, "%f, %f\n", first_scat_hypot, second_scat_hypot);
-				vec_print(endpoints[0]->loc, out_in_patient);
-				vec_print(endpoints[1]->loc, out_in_patient);
+				fprintf(out_in_patient, "%f, %f", first_scat_hypot, second_scat_hypot);
+				// vec_print(endpoints[0]->loc, out_in_patient);
+				// vec_print(endpoints[1]->loc, out_in_patient);
 				fprintf(out_in_patient, "\n");
+			}
+			if (endpoints != NULL) {
+				// delete_scatter(endpoints[0]);
+				// delete_scatter(endpoints[1]);
+				free(endpoints);
 			}
 
 		} else {
