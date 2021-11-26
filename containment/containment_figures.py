@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib
 from numpy.core.numeric import full
 from numpy.lib.stride_tricks import broadcast_to
+from matplotlib.ticker import MaxNLocator
 
 full_data = np.loadtxt("30_cm_45_deg", delimiter=',')
 relevent = full_data[:,1]
@@ -24,8 +25,8 @@ bright_eng = rel_bright_eng[rel_bright_eng >= 0]
 
 # hist, bins = np.histogram(relevent, bins=given_bins, range=(0,100))
 hist, bins = np.histogram(a, bins=20, range=(0,20), normed=True)
-hist2, bins2 = np.histogram(b, bins=40, range=(0, 511), normed=False)
-hist3, bins3 = np.histogram(c, bins=40, range=(0,511), normed=False)
+hist2, bins2 = np.histogram(b, bins=40, range=(0, 511))
+hist3, bins3 = np.histogram(c, bins=40, range=(0,511))
 hist2 = hist2 / len(b)
 hist3 = hist3 / len(b)
 hist2less3 = hist2 - hist3
@@ -56,7 +57,7 @@ fig, an = plt.subplots()
 # ax.scatter(hist, bins[:(len(bins) - 1)])
 # ax.hist(a, bins=80, density=True, rwidth=.8, color='grey', range= (0,79), log=False)
 ax.plot(bins[:-1], hist, 'Dk', label = 'Number of scatters before escape of 511 kev\ngamma entering 30 cm of water at 45 degrees')
-ay.vlines(170.333, 0, 6.8, label='kinematic limit of one scatter', )
+# ay.vlines(170.333, 0, 6.8, label='kinematic limit of one scatter', )
 ay.plot(bins3[:-1], hist3, 'ok', mfc='none', label = 'energies for gammas at 511 keV\nthat escape after one scatter')
 ay.plot(bins2[:-1], hist2, 'Dk-', label = 'energies for all gammas after\nescaping after entering a 30 cm\nthick block of water')
 
@@ -85,6 +86,9 @@ ay.set_ylim(top=6.8)
 aw.set_ylim(bottom=0.)
 an.set_ylim(bottom=0.)
 
+ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+ax.tick_params(which = 'minor', bottom=True, top=True, left=True, right=True);
+ax.tick_params(bottom=True, top=True, left=True, right=True)
 
 # plt.xlim(40, 160)
 # plt.ylim(0, 0.03)
@@ -101,7 +105,7 @@ ay.legend()
 aw.legend()
 an.legend()
 plt.tick_params(bottom=True, top=True, left=True, right=True)
-plt.tick_params(which = 'minor',bottom=False, top=False, left=False, right=False)
+# plt.tick_params(which = 'minor',bottom=False, top=False, left=False, right=False)
 plt.show()
 
 
