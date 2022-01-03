@@ -224,6 +224,55 @@ double exit_energy(llist* history) {
 	return most_recent_gamma->energy;
 }
 
+/* 
+ * measures the distance from the edge of the water to the first scatter
+ * location. Assumes that the front plane of the water has a point at (0,0,0)
+ * and rotates about the y axis. This means that the y axis is unimportant for
+ * calculating distance from front. 
+ */
+double* scatter_dist(llist* history, double angle) {
+	if (history == NULL) {
+		return NULL;
+	}
+	history = history->down;
+	if (history == NULL) {
+		return NULL;
+	}
+	event* first_scatter = history->data;
+	event* second_scatter;
+	event* third_scatter;
+	history = history->down;
+	if (history == NULL) {
+		second_scatter = NULL;
+		third_scatter = NULL;
+	} else {
+		second_scatter = history->data;
+		history = history->down;
+		if (history == NULL) {
+			third_scatter = NULL;
+		} else {
+			third_scatter = NULL;
+		}
+	}
+	double *return_vals = (double*)malloc(3 * sizeof(double));
+	if (first_scatter != NULL) {
+		return_vals[0] = fabs(first_scatter->location->z - (sin(angle) * first_scatter->location->x));
+	} else {
+		return_vals[0] = -1.0;
+	}
+	if (second_scatter != NULL) {
+		return_vals[1] = fabs(second_scatter->location->z - (sin(angle) * second_scatter->location->x));
+	} else {
+		return_vals[1] = -1.0;
+	}
+	if (third_scatter != NULL) {
+		return_vals[2] = fabs(third_scatter->location->z - (sin(angle) * third_scatter->location->x));
+	} else {
+		return_vals[2] = -1.0;
+	}
+	return return_vals;
+}
+
 int main(int argc, char **argv) {
 	// quick reminder that argc is the number of arguments,
 	// argv points to the strings of the arguments
@@ -231,7 +280,7 @@ int main(int argc, char **argv) {
 	// we are looking for an input histories file, an output file name,
 	// and an inner radius of the detector this may later be changed to
 	// input histories, input data file, output file name
-	if (argc != 3) {
+	if (argc != 4) {
 		printf("Unable to run. Expected 2 arguments got %i.\n", argc - 1);
 		printf("Expects an input volume history file");
 		printf(" and the output file name.");
@@ -248,6 +297,7 @@ int main(int argc, char **argv) {
 		printf("Unable to open output file for writing\n");
 		return 1;
 	}
+	double block_angle = strtod(argv[3], NULL);
 
 
 	llist *history = load_history(in_histories, read_line);
@@ -265,7 +315,14 @@ int main(int argc, char **argv) {
 			fprintf(out_containment, "%f, ", exit_energy(history));
 		}
 		doubleint bright = brightest_scatter(history);
-		fprintf(out_containment, "%f, %i\n", bright.doub, bright.integer);
+		fprintf(out_containment, "%f, %i, ", bright.doub, bright.integer);
+		double* scatter_distances = scatter_dist(history, block_angle);
+		if (scatter_distances == NULL) {
+			fprintf(out_containment, "%f, %f, %f\n", -1.0, -1.0, -1.0);
+		} else {
+			fprintf(out_containment, "%f, %f, %f\n", scatter_distances[0], scatter_distances[1], scatter_distances[2]);
+			free(scatter_distances);
+		}
 
 		// cleanup of the current tick
 		fmap(history, delete_event);
