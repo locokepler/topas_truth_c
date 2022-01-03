@@ -12,6 +12,8 @@ one_scatters = full_data[full_data[:,1] == 1]
 one_scat_energy = one_scatters[:,2]
 rel_bright_int = full_data[:,4]
 rel_bright_eng = full_data[:,3]
+rel_dist1 = full_data[:,5]
+rel_dist2 = full_data[:,6]
 # print(relevent[0:10])
 
 a = relevent[relevent >= 0]
@@ -19,6 +21,8 @@ b = rel_energy[rel_energy >= 0]
 c = one_scat_energy[one_scat_energy >= 0]
 bright_int = rel_bright_int[rel_bright_int >= 0]
 bright_eng = rel_bright_eng[rel_bright_eng >= 0]
+rel_dist1_real = rel_dist1[rel_dist1 >= 0]
+rel_dist2_real = rel_dist2[rel_dist2 >= 0]
 
 # print(a[0:10])
 # given_bins = np.logspace(np.log10(0.1), np.log10(100), 100)
@@ -32,6 +36,8 @@ hist3 = hist3 / len(b)
 hist2less3 = hist2 - hist3
 brightest, brightbin = np.histogram(bright_int, bins=6, range=(1,7), normed=True)
 eng_bright, eng_bright_bin = np.histogram(bright_eng, bins=40, range=(0,340.666666), normed=True)
+first_scat_dist, scat_bins = np.histogram(rel_dist1_real, bins = 30, range=(0,30))
+second_scat_dist, empty = np.histogram(rel_dist2_real, bins=30, range=(0,30))
 
 hist = 100 * hist
 hist2 = 100 * hist2
@@ -53,18 +59,23 @@ fig, ay = plt.subplots()
 fig, az = plt.subplots()
 fig, aw = plt.subplots()
 fig, an = plt.subplots()
+fig, scat_dist = plt.subplots()
 
 # ax.scatter(hist, bins[:(len(bins) - 1)])
 # ax.hist(a, bins=80, density=True, rwidth=.8, color='grey', range= (0,79), log=False)
 ax.plot(bins[:-1], hist, 'Dk', label = 'Number of scatters before escape of 511 kev\ngamma entering 30 cm of water at 45 degrees')
 # ay.vlines(170.333, 0, 6.8, label='kinematic limit of one scatter', )
 ay.plot(bins3[:-1], hist3, 'ok', mfc='none', label = 'energies for gammas at 511 keV\nthat escape after one scatter')
-ay.plot(bins2[:-1], hist2, 'Dk-', label = 'energies for all gammas after\nescaping after entering a 30 cm\nthick block of water')
+ay.plot(bins2[:-1], hist2, 'Dk', label = 'energies for all gammas after\nescaping after entering a 30 cm\nthick block of water')
 
 # az.plot(bins2[:-1], hist2less3, 'ok', mfc='none')
 aw.plot(brightbin[:-1], brightest, 'dk', label = 'brightest scatter by a\ngamma at 511 keV entering\nwater normal to the surface')
 an.plot(eng_bright_bin[:-1], eng_bright, 'dk', label = 'highest energy scatter of a\ngamma at 511 keV entering\nwater normal to the surface')
 # plt.plot(x_axis, bin_size)
+
+scat_dist.plot(scat_bins[:-1], first_scat_dist, 'dk', label='N1')
+scat_dist.plot(scat_bins[:-1], second_scat_dist, 'sk', label='N2')
+
 #ay.set_xscale('log')
 
 ax.set_xlabel('Scatters before escaping')
@@ -104,6 +115,7 @@ ax.legend()
 ay.legend()
 aw.legend()
 an.legend()
+scat_dist.legend()
 plt.tick_params(bottom=True, top=True, left=True, right=True)
 # plt.tick_params(which = 'minor',bottom=False, top=False, left=False, right=False)
 plt.show()
