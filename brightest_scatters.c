@@ -8,6 +8,7 @@
 
 #define ENG_RNG 0.01
 #define COMP_INT 1667457891
+#define DEG_TO_RAD 0.017453
 
 /*
  * Looks to see if a gamma in a history escapes the detector module without
@@ -251,7 +252,7 @@ double* scatter_dist(llist* history, double angle) {
 		if (history == NULL) {
 			third_scatter = NULL;
 		} else {
-			third_scatter = NULL;
+			third_scatter = history->data;
 		}
 	}
 	double *return_vals = (double*)malloc(3 * sizeof(double));
@@ -298,6 +299,7 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 	double block_angle = strtod(argv[3], NULL);
+	block_angle = DEG_TO_RAD * block_angle;
 
 
 	llist *history = load_history(in_histories, read_line);
