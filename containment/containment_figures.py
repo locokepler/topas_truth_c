@@ -14,6 +14,7 @@ rel_bright_int = full_data[:,4]
 rel_bright_eng = full_data[:,3]
 rel_dist1 = full_data[:,5]
 rel_dist2 = full_data[:,6]
+rel_dist3 = full_data[:,7]
 # print(relevent[0:10])
 
 a = relevent[relevent >= 0]
@@ -23,6 +24,8 @@ bright_int = rel_bright_int[rel_bright_int >= 0]
 bright_eng = rel_bright_eng[rel_bright_eng >= 0]
 rel_dist1_real = rel_dist1[rel_dist1 >= 0]
 rel_dist2_real = rel_dist2[rel_dist2 >= 0]
+rel_dist3_real = rel_dist3[rel_dist3 >= 0]
+
 
 # print(a[0:10])
 # given_bins = np.logspace(np.log10(0.1), np.log10(100), 100)
@@ -38,6 +41,8 @@ brightest, brightbin = np.histogram(bright_int, bins=6, range=(1,7), normed=True
 eng_bright, eng_bright_bin = np.histogram(bright_eng, bins=40, range=(0,340.666666), normed=True)
 first_scat_dist, scat_bins = np.histogram(rel_dist1_real, bins = 30, range=(0,30))
 second_scat_dist, empty = np.histogram(rel_dist2_real, bins=30, range=(0,30))
+third_scat_dist, empty = np.histogram(rel_dist3_real, bins=30, range=(0,30))
+
 
 hist = 100 * hist
 hist2 = 100 * hist2
@@ -75,6 +80,7 @@ an.plot(eng_bright_bin[:-1], eng_bright, 'dk', label = 'highest energy scatter o
 
 scat_dist.plot(scat_bins[:-1], first_scat_dist, 'dk', label='N1')
 scat_dist.plot(scat_bins[:-1], second_scat_dist, 'sk', label='N2')
+scat_dist.plot(scat_bins[:-1], third_scat_dist, 'ok', label='N3')
 
 #ay.set_xscale('log')
 
