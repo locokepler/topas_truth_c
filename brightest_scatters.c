@@ -225,6 +225,11 @@ double exit_energy(llist* history) {
 	return most_recent_gamma->energy;
 }
 
+double box_z_by_x(double box_hz, double box_z_loc, double y_angle, double x) {
+	double x_term = tan(y_angle) * (x - (box_hz * cos(y_angle)));
+	return x_term + box_hz - (box_hz * cos(y_angle));
+}
+
 /* 
  * measures the distance from the edge of the water to the first scatter
  * location. Assumes that the front plane of the water has a point at (0,0,0)
@@ -257,21 +262,61 @@ double* scatter_dist(llist* history, double angle) {
 	}
 	double *return_vals = (double*)malloc(3 * sizeof(double));
 	if (first_scatter != NULL) {
-		return_vals[0] = fabs(first_scatter->location->z - (sin(angle) * first_scatter->location->x));
+		return_vals[0] = fabs((first_scatter->location->z + box_z_by_x(15,15,angle,first_scatter->location->x)) * cos(angle));
 	} else {
 		return_vals[0] = -1.0;
 	}
 	if (second_scatter != NULL) {
-		return_vals[1] = fabs(second_scatter->location->z - (sin(angle) * second_scatter->location->x));
+		return_vals[1] = fabs((second_scatter->location->z + box_z_by_x(15,15,angle,second_scatter->location->x)) * cos(angle));
 	} else {
 		return_vals[1] = -1.0;
 	}
 	if (third_scatter != NULL) {
-		return_vals[2] = fabs(third_scatter->location->z - (sin(angle) * third_scatter->location->x));
+		return_vals[2] = fabs((third_scatter->location->z + box_z_by_x(15,15,angle,third_scatter->location->x)) * cos(angle));
 	} else {
 		return_vals[2] = -1.0;
 	}
 	return return_vals;
+}
+
+/*
+ * first_scat_ang_eng:
+ * takes a history and looks for the first scatter, measuring the angle of the
+ * first scatter and the energy change of the first scatter. Returns an array of
+ * length 2, first indice is energy, second is angle (in radians)
+ */
+double* first_scat_ang_eng(llist* history) {
+	if (history == NULL) {
+		return NULL;
+	} else if (((event*)history->data)->particle != 22) {
+		return NULL;
+	}
+	if (history->down == NULL) {
+		return NULL;
+	} else if (((event*)history->down->data)->particle != 22) {
+		return NULL;
+	}
+	if (history->down->down == NULL) {
+		return NULL;
+	} else if (((event*)history->down->down->data)->particle != 22) {
+		return NULL;
+	}
+	event* first = history->data;
+	history = history->down;
+	event* second = history->data;
+	history = history->down;
+	event* third = history->data;
+	vec3* in_vec = vec_sub(first->location, second->location);
+	vec3* out_vec = vec_sub(second->location, third->location);
+	double dot = vec_dot(in_vec, out_vec);
+	double angle = acos(dot / (vec_mag(in_vec) * vec_mag(out_vec)));
+	double energy = first->energy - second->energy;
+	double* return_array = (double*)malloc(2 * sizeof(double));
+	return_array[0] = energy;
+	return_array[1] = angle;
+	free(in_vec);
+	free(out_vec);
+	return return_array;
 }
 
 int main(int argc, char **argv) {
@@ -320,10 +365,17 @@ int main(int argc, char **argv) {
 		fprintf(out_containment, "%f, %i, ", bright.doub, bright.integer);
 		double* scatter_distances = scatter_dist(history, block_angle);
 		if (scatter_distances == NULL) {
-			fprintf(out_containment, "%f, %f, %f\n", -1.0, -1.0, -1.0);
+			fprintf(out_containment, "%f, %f, %f, ", -1.0, -1.0, -1.0);
 		} else {
-			fprintf(out_containment, "%f, %f, %f\n", scatter_distances[0], scatter_distances[1], scatter_distances[2]);
+			fprintf(out_containment, "%f, %f, %f, ", scatter_distances[0], scatter_distances[1], scatter_distances[2]);
 			free(scatter_distances);
+		}
+		double* compton = first_scat_ang_eng(history);
+		if (compton == NULL) {
+			fprintf(out_containment, "%f, %f\n", -1.0, -1.0);
+		} else {
+			fprintf(out_containment, "%f, %f\n", compton[0], compton[1]);
+			free(compton);
 		}
 
 		// cleanup of the current tick
