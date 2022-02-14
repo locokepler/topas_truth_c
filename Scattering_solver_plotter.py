@@ -7,6 +7,10 @@ full_data = np.loadtxt("2_gamma_5%_cut", delimiter=',', skiprows=1)
 original_algo = full_data[:,2] #no_in_pat[:,2]
 new_algo = full_data[:,3]
 # print(relevent[0:10])
+alpha_scat = full_data[:,6]
+alpha_scat = np.append(alpha_scat,full_data[:,8])
+beta_scat = full_data[:,7]
+beta_scat = np.append(beta_scat, full_data[:,9])
 
 a_orginal = original_algo[original_algo > 0]
 a_new = new_algo[new_algo > 0]
@@ -18,6 +22,9 @@ given_bins = np.logspace(np.log10(0.0001), np.log10(10), 100)
 hist_original, bins_original = np.histogram(a_orginal, bins=40, range=(0,80))
 hist_new, bins_new = np.histogram(a_new, bins=40, range=(0, 80))
 log_new, log_bins_new = np.histogram(a_new, bins=given_bins, range=(.0001,10))
+
+alpha_hist, alpha_bins = np.histogram(alpha_scat, bins=10, range=(1,10))
+beta_hist, beta_bins = np.histogram(beta_scat, bins=10, range=(1,10))
 
 # hist_original = 100. * hist_original
 # hist_new = 100. * hist_new
@@ -76,9 +83,14 @@ print(np.sum(guess_hist) / len(guesses))
 guess_hist = guess_hist / len(guesses)
 
 fig, guess_fig = plt.subplots()
+fig, scat_num = plt.subplots()
 
 guess_fig.plot(guess_bins[:-1], guess_hist, 'Dk', label = 'Difference between best and second best guess')
 guess_fig.set_ylim(bottom=0)
+
+scat_num.plot(alpha_bins[:-1], alpha_hist, 'sk')
+scat_num.plot(beta_bins[:-1], beta_hist, 'ok')
+
 # guess_fig.set_xlim(left=0)
 guess_fig.set_xscale('log')
 guess_fig.set_xlabel('energy delta (keV)')
