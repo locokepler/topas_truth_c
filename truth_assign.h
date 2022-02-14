@@ -29,6 +29,8 @@ double energy_cutoff;
 double first_scat_hypot;
 double second_scat_hypot;
 
+int predicted_vs_real[4] = {0,0,0,0};
+
 
 
 #endif

@@ -630,6 +630,12 @@ scatter* multi_gamma_iterator(llist* history1, llist* history2, double energy_pe
 	// a couple of variables for debug information
 	double hypoth;
 	double second_best;
+	int run_num;
+	if (predicted_vs_real[0] == 0) {
+		run_num = 1;
+	} else {
+		run_num = 2;
+	}
 
 	// time to iterate over all of the possible combinations. The avaliable
 	// configurations are:
@@ -652,6 +658,8 @@ scatter* multi_gamma_iterator(llist* history1, llist* history2, double energy_pe
 						second_best = best_find;
 						best_find = hypoth;
 						best_scatter = scatters1[j];
+						predicted_vs_real[2 * (run_num - 1)] = j + 1;
+						predicted_vs_real[2 * (run_num - 1) + 1] = k + 1;
 					}
 				}
 			}
@@ -1062,6 +1070,8 @@ int main(int argc, char **argv) {
 	uint hist_num = 0;
 	first_scat_hypot = 0;
 	second_scat_hypot = 0;
+
+	// begin the primary loop over all histories
 	while (history != NULL) {
 		// print an update to how far we have made it
 		if ((hist_num / 10000) * 10000 == hist_num) {
@@ -1130,18 +1140,24 @@ int main(int argc, char **argv) {
 			}
 			first_scat_hypot = 0;
 			second_scat_hypot = 0;
+			predicted_vs_real[0] = 0;
+			predicted_vs_real[1] = 0;
+			predicted_vs_real[2] = 0;
+			predicted_vs_real[3] = 0;
 
 			endpoints = find_endpoints_2hist(in_det_hist, energy_cutoff);
 
 			if (endpoints == NULL) {
-				fprintf(out_in_patient, "%f, %f, %f\n", -1.0, -1.0, -1.0);
+				fprintf(out_in_patient, "%f, %f, %f,", -1.0, -1.0, -1.0);
+				fprintf(out_in_patient, "%i,%i,%i,%i\n", -1, -1, -1, -1);
 			} else {
 					// now we need to find the distance by which the endpoints miss
 				vec3* annh_loc = find_annihilation_point(history);
 				double miss_dist = first_scat_miss(endpoints, annh_loc);
 
 				fprintf(out_in_patient, "%f, ", miss_dist);
-				fprintf(out_in_patient, "%f, %f", first_scat_hypot, second_scat_hypot);
+				fprintf(out_in_patient, "%f, %f,", first_scat_hypot, second_scat_hypot);
+				fprintf(out_in_patient, "%i, %i, %i, %i", predicted_vs_real[0],predicted_vs_real[1],predicted_vs_real[2],predicted_vs_real[3]);
 				// vec_print(endpoints[0]->loc, out_in_patient);
 				// vec_print(endpoints[1]->loc, out_in_patient);
 				fprintf(out_in_patient, "\n");
