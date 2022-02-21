@@ -1169,7 +1169,8 @@ int main(int argc, char **argv) {
 			}
 
 		} else {
-			fprintf(out_in_patient, "%f, %f, %f, %f\n", -1.0, -1.0, -1.0, -1.0);
+			fprintf(out_in_patient, "%f, %f, %f, %f,", -1.0, -1.0, -1.0, -1.0);
+			fprintf(out_in_patient, "%i,%i,%i,%i\n", -1, -1, -1, -1);
 		}
 
 
