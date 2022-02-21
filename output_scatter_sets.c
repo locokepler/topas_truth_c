@@ -626,7 +626,7 @@ scatter* multi_gamma_iterator(llist* history1, llist* history2, double energy_pe
 
 	double best_find = 0;
 
-	scatter* best_scatter;
+	scatter* best_scatter = NULL;
 
 	int len_hist1 = list_length(history1);
 	int len_hist2 = list_length(history2);
@@ -1038,7 +1038,7 @@ int find_annih_gamma(event* item) {
 	return 0;
 }
 
-llist* build_scat_lists(llist* detector_history) {
+llist** build_scat_lists(llist* detector_history) {
 	if (detector_history == NULL) {
 		return NULL;
 	}
@@ -1071,7 +1071,7 @@ llist* build_scat_lists(llist* detector_history) {
 
 	llist* scat_list1 = build_scatters(detector_history, first_id);
 	llist* scat_list2 = build_scatters(detector_history, second_id);
-	llist* return_lists = (llist*)malloc(sizeof(llist*) * 4);
+	llist** return_lists = (llist**)malloc(sizeof(llist*) * 4);
 	return_lists[0] = scat_list1;
 	return_lists[1] = scat_list2;
 	return_lists[2] = (llist*)first_id;
@@ -1086,7 +1086,7 @@ int main(int argc, char **argv) {
 	// we are looking for an input histories file, an output file name,
 	// and an inner radius of the detector this may later be changed to
 	// input histories, input data file, output file name
-	if (argc != 7) {
+	if (argc < 7) {
 		printf("Unable to run. Expected 6 arguments got %i.\n", argc - 1);
 		printf("Expects an input full history file, input detector volume ");
 		printf("history file, output file name, detector");
@@ -1112,6 +1112,14 @@ int main(int argc, char **argv) {
 	double in_patient_distance = strtod(argv[4], NULL);
 	double detector_height = strtod(argv[5], NULL);
 	energy_cutoff = strtod(argv[6], NULL);
+	unsigned long max_hist;
+	if ((strncmp(argv[7], "-h", 2)) && (argc == 9)) {
+		max_hist = strtol(argv[8], NULL, 10);
+		printf("run to history %i\n", max_hist);
+	} else {
+		max_hist = 10000;
+	}
+
 	if ((in_patient_distance <= 0) || (detector_height <= 0) || (energy_cutoff <= 0)) {
 		printf("Size and energy dimensions must be greater than zero\n");
 		return 1;
@@ -1121,9 +1129,9 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
-	fprintf(out_in_patient, "history number, in patient scatter occurance, ");
-	fprintf(out_in_patient, "first algorithem miss distance, second algo miss dist, ");
-	fprintf(out_in_patient, "delta first hypot (2ed algo), delta sec hypot (2ed algo)\n");
+	// fprintf(out_in_patient, "history number, in patient scatter occurance, ");
+	// fprintf(out_in_patient, "first algorithem miss distance, second algo miss dist, ");
+	// fprintf(out_in_patient, "delta first hypot (2ed algo), delta sec hypot (2ed algo)\n");
 
 	// current loop version, just for testing
 	llist *history = load_history(in_histories, read_line);
@@ -1133,7 +1141,7 @@ int main(int argc, char **argv) {
 	second_scat_hypot = 0;
 
 	// begin the primary loop over all histories
-	while (history != NULL) {
+	while ((history != NULL) && (hist_num < max_hist)) {
 		// print an update to how far we have made it
 		if ((hist_num / 10000) * 10000 == hist_num) {
 			printf("history number: %u\n", hist_num);
@@ -1198,7 +1206,7 @@ int main(int argc, char **argv) {
                 // print out the locations of all of the gamma scatter locations
                 // for reading in the event viewer. First gamma comes out first
                 // prints the deposited energy and position.
-				llist* scatter_lists = build_scat_lists(in_det_hist);
+				llist** scatter_lists = build_scat_lists(in_det_hist);
 				f_scat_list_print(((event*)(history->data))->number, (uint)scatter_lists[2], scatter_lists[0], out_in_patient, predicted_vs_real[0], predicted_vs_real[1]);
 				f_scat_list_print(((event*)(history->data))->number, (uint)scatter_lists[3], scatter_lists[1], out_in_patient, predicted_vs_real[2], predicted_vs_real[3]);
 
