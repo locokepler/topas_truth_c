@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from numpy.core.numeric import full
 
-full_data = np.loadtxt("2_gamma_5%_cut", delimiter=',', skiprows=1)
+full_data = np.loadtxt("test", delimiter=',', skiprows=1)
 #no_in_pat = full_data[full_data[:,1] == 0]
 original_algo = full_data[:,2] #no_in_pat[:,2]
 new_algo = full_data[:,3]
@@ -88,8 +88,11 @@ fig, scat_num = plt.subplots()
 guess_fig.plot(guess_bins[:-1], guess_hist, 'Dk', label = 'Difference between best and second best guess')
 guess_fig.set_ylim(bottom=0)
 
-scat_num.plot(alpha_bins[:-1], alpha_hist, 'sk')
-scat_num.plot(beta_bins[:-1], beta_hist, 'ok')
+scat_num.plot(alpha_bins[:-1], alpha_hist, 'sk', label='alpha')
+scat_num.plot(beta_bins[:-1], beta_hist, 'ok', label='beta')
+scat_num.set_xlim(left=0, right = 10)
+scat_num.set_ylim(bottom=0)
+scat_num.legend()
 
 # guess_fig.set_xlim(left=0)
 guess_fig.set_xscale('log')
