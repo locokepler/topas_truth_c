@@ -112,11 +112,16 @@ scat_dist.plot(scat_bins[:-1], third_scat_dist, ':b', label='N3')
 X, Y = np.meshgrid(x_edges, y_edges)
 compt_2d.pcolormesh(X, Y, np.log(h_compt), cmap='hot')
 
-compt_slice.plot(Y[180:250],(h_compt[200,180:250]))
 
+
+compt_slice.plot(X[0,165:245], ((h_compt[165:245,:])[:,218]), label='slice at ')
+print((Y[218,0]))
+compt_slice.set_xlabel('angle')
+compt_slice.set_ylabel('counts')
+compt_slice.set_ylim(bottom=0)
 #ay.set_xscale('log')
-
-font_scale = 18
+# X[180:250],
+font_scale = 16
 
 ax.set_xlabel('Scatters before escaping', fontsize=font_scale)
 ax.set_ylabel('% of Occurances', fontsize=font_scale)
@@ -133,6 +138,9 @@ an.set_ylabel('% of all scatters with given energy/keV', fontsize=font_scale)
 
 scat_dist.set_xlabel('cm into water', fontsize=font_scale)
 scat_dist.set_ylabel('% of events/cm', fontsize=font_scale)
+
+compt_2d.set_xlabel('scatter angle', fontsize=font_scale)
+compt_2d.set_ylabel('deposited energy', fontsize=font_scale)
 
 ax.set_ylim(bottom=0.)
 ay.set_ylim(bottom=0.)
