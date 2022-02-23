@@ -77,17 +77,18 @@ scatter* new_scatter_old(vec3* vector, double deposited) {
 	return new;
 }
 
-scatter* new_scatter(vec3* vector, double deposit, double eng_uncert, double space_uncert) {
+scatter* new_scatter(vec3* vector, vec3* dir, double deposit, double eng_uncert, double space_uncert) {
 	scatter* new = (scatter*)malloc(sizeof(scatter));
 	new->deposit = deposit;
 	new->eng_uncert = eng_uncert;
 	new->space_uncert = space_uncert;
 	new->loc = vector;
+	new->dir = dir;
 	return new;
 }
 
 scatter* copy_scatter(scatter* a) {
-	return new_scatter(vec_copy(a->loc), a->deposit, a->eng_uncert, a->space_uncert);
+	return new_scatter(vec_copy(a->loc),vec_copy(a->dir), a->deposit, a->eng_uncert, a->space_uncert);
 }
 
 event* duplicate_event(event* source) {
@@ -109,6 +110,7 @@ void* delete_scatter(void* in) {
 		return NULL;
 	}
 	free(((scatter*)in)->loc);
+	free(((scatter*)in)->dir);
 	free(in);
 	return NULL;
 }
@@ -737,6 +739,11 @@ llist* build_scatters(llist* detector_history, int id) {
 	// of a gamma with the same identifier as id. If all is good the location is
 	// added as a scatter with the electron's energy.
 
+	// now also determines the direction of the electron. This is returned as
+	// a simple vector pointing from the current place to the second location
+	// of the electron. If the electron does not produce a second location then
+	// the scatter is given a NULL value for the direction
+
 	// put us at the start of the list
 	detector_history = list_head(detector_history);
 	// make the place for the list of scatters
@@ -773,7 +780,17 @@ llist* build_scatters(llist* detector_history, int id) {
 					if (gamma_id == id) {
 						// time to add this electron to the scatter list
 						vec3* scatter_loc = vec_copy(((event*)detector_history->data)->location);
-						scatter_list = add_to_bottom(scatter_list, new_scatter_old(scatter_loc, ((event*)detector_history->data)->energy));
+						event* cur_event = (event*)detector_history->data;
+						event* next_event = (event*)detector_history->down->data;
+						vec3* ele_dir = NULL;
+						if (cur_event->id == next_event->id) {
+							ele_dir = vec_sub(next_event->location, ((event*)detector_history->data)->location);
+						}
+						if (ele_dir == NULL) {
+							scatter_list = add_to_bottom(scatter_list, new_scatter_old(scatter_loc, ((event*)detector_history->data)->energy));
+						} else {
+							scatter_list = add_to_bottom(scatter_list, new_scatter(scatter_loc, ele_dir, cur_event->energy, -1, -1));
+						}
 					}
 					// add the electron to the list of electrons we have checked
 					int* electron_id = (int*)malloc(sizeof(int));
