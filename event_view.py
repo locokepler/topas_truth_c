@@ -38,7 +38,7 @@ while True:
 
 	# ax.scatter3D(data[:,0], data[:,1], data[:,2], c=data[:,3], cmap='hot')
 
-	ay.scatter3D(data[:,0], data[:,1], data[:,2], c=data[:,3], cmap='binary')
+	ay.scatter3D(data[:,0], data[:,1], data[:,2], c=data[:,3], cmap='hot')
 	ay.plot3D(data[:,0], data[:,1], data[:,2], 'black')
 
 	plt.show()
