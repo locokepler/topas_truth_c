@@ -19,6 +19,7 @@ typedef struct event_ {
 
 typedef struct scatter_ {
 	vec3* loc;
+  vec3* dir;
 	double deposit;
 	double eng_uncert;
 	double space_uncert;
