@@ -21,10 +21,10 @@ double vec_dot(vec3* a, vec3* b);
 // returns the addition of two 3-vectors as a new 3-vector
 vec3 *vec_add(vec3 *a, vec3* b);
 
-// returns the subtraction of the second vector from the first
+// returns the subtraction of the second vector from the first as a new vector
 vec3 *vec_sub(vec3* a, vec3* b);
 
-// returns the cross product of the two vectors a X b
+// returns the cross product of the two vectors a X b as a new vector
 vec3 *vec_cross(vec3* a, vec3* b);
 
 // calculates the angle between two 3 vectors
