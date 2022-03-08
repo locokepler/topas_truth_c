@@ -72,6 +72,7 @@ scatter* new_scatter_old(vec3* vector, double deposited) {
 	scatter* new = (scatter*)malloc(sizeof(scatter));
 	new->deposit = deposited;
 	new->loc = vector;
+	new->dir = NULL;
 	new->eng_uncert = -1.;
 	new->space_uncert = -1.;
 	return new;
@@ -522,7 +523,7 @@ scatter* scattering_iterator(llist* scatter_list, double energy_percent) {
 
 
 	double hypoth;
-	double second_best;
+	double second_best = 0;
 	// now to iterate over all of the loop possibilites
 	for (int first = 0; first < list_len; first++)
 	{
@@ -553,11 +554,11 @@ scatter* scattering_iterator(llist* scatter_list, double energy_percent) {
 		}
 	}
 
-	if (first_scat_hypot == 0) {
-		first_scat_hypot = fabs(best_find - second_best);
-	} else {
-		second_scat_hypot = fabs(best_find - second_best);
-	}
+	// if (first_scat_hypot == 0) {
+	// 	first_scat_hypot = fabs(best_find - second_best);
+	// } else {
+	// 	second_scat_hypot = fabs(best_find - second_best);
+	// }
 
 	free(locations);
 	// done iterating, now have the best scatter found in the list
@@ -602,7 +603,7 @@ scatter* multi_gamma_iterator(llist* history1, llist* history2, double energy_pe
 
 	double best_find = 0;
 
-	scatter* best_scatter;
+	scatter* best_scatter = NULL;
 
 	int len_hist1 = list_length(history1);
 	int len_hist2 = list_length(history2);
@@ -631,13 +632,8 @@ scatter* multi_gamma_iterator(llist* history1, llist* history2, double energy_pe
 
 	// a couple of variables for debug information
 	double hypoth;
-	double second_best;
-	int run_num;
-	if (predicted_vs_real[0] == 0) {
-		run_num = 1;
-	} else {
-		run_num = 2;
-	}
+	double second_best = 0;
+
 
 	// time to iterate over all of the possible combinations. The avaliable
 	// configurations are:
@@ -729,7 +725,7 @@ scatter* multi_gamma_ele_iterator(llist* history1, llist* history2, double energ
 
 	double best_find = 0;
 
-	scatter* best_scatter;
+	scatter* best_scatter = NULL;
 
 	int len_hist1 = list_length(history1);
 	int len_hist2 = list_length(history2);
@@ -758,7 +754,7 @@ scatter* multi_gamma_ele_iterator(llist* history1, llist* history2, double energ
 
 	// a couple of variables for debug information
 	double hypoth;
-	double second_best;
+	double second_best = 0;
 	int run_num;
 	if (predicted_vs_real[0] == 0) {
 		run_num = 1;
@@ -771,31 +767,53 @@ scatter* multi_gamma_ele_iterator(llist* history1, llist* history2, double energ
 	// for all i in len_hist2 and all of j != k in len_hist1
 	for (int i = 0; i < len_hist2; i++) {
 		for (int j = 0; j < len_hist1; j++) {
+			double i_j_dot = scatter_dir_dot(scatters2[i], scatters1[j]);
+			vec3* in = vec_sub(scatters2[i]->loc, scatters1[j]->loc);
 			for (int k = 0; k < len_hist1; k++) {
 				// can only do 3 point checks with j and k not being the same
 				if (j != k) {
 					// first check if the direction is physical
-					if ((scatter_dir_dot(scatters2[i], scatters1[j]) >= 0) ||
-							(scatter_dir_dot(scatters1[j], scatters1[k]) >= 0)) {
-						hypoth = expected_energy_b(scatters2[i], scatters1[j], scatters1[k]);
-						// check if the hypothesis is better than previous
-						if (fabs(hypoth - ELECTRON_MASS) < fabs(best_find - ELECTRON_MASS)) {
-							// the current hypthesis is better than the previous best
-							if (GENERAL_DEBUG) {
-								printf("2 hist Scattering Iterator: new best scatter found:\n");
-								printf("%f keV at ", hypoth);
-								vec_print(scatters1[j]->loc, stdout);
-								printf("\n");
-							}
-							second_best = best_find;
-							best_find = hypoth;
-							best_scatter = scatters1[j];
-							predicted_vs_real[2 * (run_num - 1)] = j + 1;
-							predicted_vs_real[2 * (run_num - 1) + 1] = k + 1;						
+					if (((i_j_dot <= 0) && (i_j_dot != -1)) &&
+							(scatter_dir_dot(scatters1[k], scatters1[j]) <= 0)) {
+						vec3* out = vec_sub(scatters1[j]->loc, scatters1[k]->loc);
+						vec3* gamma_cross = vec_cross(in, out);
+						vec3* gamma_cross_norm = vec_norm(gamma_cross);
+						if (gamma_cross != NULL) {
+							free(gamma_cross);
 						}
+						vec3* ele_dir = vec_norm(scatters1[j]->dir);
+						vec3* plane = vec_cross(gamma_cross_norm, ele_dir);
+						if (ele_dir != NULL)
+							free(ele_dir);
+						free(gamma_cross_norm);
+						free(out);
+						// the magnitude of plane is equal to the cos of the angle between the plane of the gamma
+						// scattering and the direction of the electron
+
+						if ((plane == NULL) || (vec_mag(plane) > 0.0)) {
+
+							hypoth = expected_energy_b(scatters2[i], scatters1[j], scatters1[k]);
+							// check if the hypothesis is better than previous
+							if (fabs(hypoth - ELECTRON_MASS) < fabs(best_find - ELECTRON_MASS)) {
+								// the current hypthesis is better than the previous best
+								if (GENERAL_DEBUG) {
+									printf("multi_gamma_ele_iterator: new best scatter found:\n");
+									printf("%f keV at ", hypoth);
+									vec_print(scatters1[j]->loc, stdout);
+									printf("\n");
+								}
+								second_best = best_find;
+								best_find = hypoth;
+								best_scatter = scatters1[j];
+								predicted_vs_real[2 * (run_num - 1)] = j + 1;
+								predicted_vs_real[2 * (run_num - 1) + 1] = k + 1;
+							}				
+						}
+						free(plane);
 					}
 				}
 			}
+			free(in);
 		}
 	}
 
@@ -912,10 +930,22 @@ llist* build_scatters(llist* detector_history, int id) {
 						// time to add this electron to the scatter list
 						vec3* scatter_loc = vec_copy(((event*)detector_history->data)->location);
 						event* cur_event = (event*)detector_history->data;
-						event* next_event = (event*)detector_history->down->data;
+						event* next_event;
+						if (detector_history->down != NULL) {
+							next_event = (event*)detector_history->down->data;
+						} else {
+							next_event = NULL;
+						}
 						vec3* ele_dir = NULL;
-						if (cur_event->id == next_event->id) {
+						if ((next_event != NULL) && (cur_event->id == next_event->id)) {
 							ele_dir = vec_sub(next_event->location, ((event*)detector_history->data)->location);
+							if ((fabs(ele_dir->x) < 0.0001) && (fabs(ele_dir->y) < 0.0001) && (fabs(ele_dir->z) < 0.0001)) {
+								// no actual movement of the electron from which to find a path
+								free(ele_dir);
+								ele_dir = NULL;
+							}
+						} else {
+							ele_dir = NULL;
 						}
 						if (ele_dir == NULL) {
 							scatter_list = add_to_bottom(scatter_list, new_scatter_old(scatter_loc, ((event*)detector_history->data)->energy));
@@ -1175,9 +1205,9 @@ scatter** find_endpoints_ele_dir(llist* detector_history, double energy_percent)
 		return NULL;
 	}
 	// run the actual finding of endpoint 1
-	scatter* endpoint1 = multi_gamma_iterator(scat_list1, scat_list2, energy_percent);
+	scatter* endpoint1 = multi_gamma_ele_iterator(scat_list1, scat_list2, energy_percent);
 	// now do the same with endpoint 2
-	scatter* endpoint2 = multi_gamma_iterator(scat_list2, scat_list1, energy_percent);
+	scatter* endpoint2 = multi_gamma_ele_iterator(scat_list2, scat_list1, energy_percent);
 
 
 	if ((endpoint1 == NULL) || (endpoint2 == NULL)) {
@@ -1189,7 +1219,7 @@ scatter** find_endpoints_ele_dir(llist* detector_history, double energy_percent)
 	}
 
 	if (GENERAL_DEBUG) {
-		printf("find_endpoints_2hist: scatters found at:\n");
+		printf("find_endpoints_ele_dir: scatters found at:\n");
 		vec_print(endpoint1->loc, stdout);
 		printf("\n");
 		vec_print(endpoint2->loc, stdout);
@@ -1214,7 +1244,7 @@ scatter** find_endpoints_ele_dir(llist* detector_history, double energy_percent)
 	return_vals[0] = first_endpoint;
 	return_vals[1] = second_endpoint;
 	if (GENERAL_DEBUG) {
-		printf("find_endpoints_2hist: returning scatters found at:\n");
+		printf("find_endpoints_ele_dir: returning scatters found at:\n");
 		vec_print(return_vals[0]->loc, stdout);
 		printf("\n");
 		vec_print(return_vals[1]->loc, stdout);
@@ -1291,11 +1321,19 @@ int main(int argc, char **argv) {
 		printf("Unable to open detector history file\n");
 		return 1;
 	}
-	FILE* out_in_patient = fopen(argv[3], "w");
-	if (out_in_patient == NULL) {
+	char* debug_file = (char*)malloc(sizeof(char) * strlen(argv[3] + 10));
+	char* lor_file = (char*)malloc(sizeof(char) * strlen(argv[3] + 10));
+	strcpy(debug_file, argv[3]);
+	strcpy(lor_file, argv[3]);
+	debug_file = strcat(debug_file, ".debug");
+	lor_file = strcat(lor_file, ".lor");
+	FILE* out_in_patient = fopen(debug_file, "w");
+	FILE* lor_output = fopen(lor_file, "w");
+	if ((out_in_patient == NULL) || (lor_output == NULL)) {
 		printf("Unable to open output file for writing\n");
 		return 1;
 	}
+
 	double in_patient_distance = strtod(argv[4], NULL);
 	double detector_height = strtod(argv[5], NULL);
 	energy_cutoff = strtod(argv[6], NULL);
@@ -1383,13 +1421,12 @@ int main(int argc, char **argv) {
 					// now we need to find the distance by which the endpoints miss
 				vec3* annh_loc = find_annihilation_point(history);
 				double miss_dist = first_scat_miss(endpoints, annh_loc);
-				if (endpoints != NULL) {
-					delete_scatter(endpoints[0]);
-					delete_scatter(endpoints[1]);
-					free(endpoints);
-				}
+				delete_scatter(endpoints[0]);
+				delete_scatter(endpoints[1]); 
+				free(endpoints);
 
-				fprintf(out_in_patient, "%f, ", miss_dist);
+
+				fprintf(out_in_patient, "%f, ", miss_dist); 
 			}
 			first_scat_hypot = 0;
 			second_scat_hypot = 0;
@@ -1416,8 +1453,8 @@ int main(int argc, char **argv) {
 				fprintf(out_in_patient, "\n");
 			}
 			if (endpoints != NULL) {
-				// delete_scatter(endpoints[0]);
-				// delete_scatter(endpoints[1]);
+				delete_scatter(endpoints[0]);
+				delete_scatter(endpoints[1]);
 				free(endpoints);
 			}
 
