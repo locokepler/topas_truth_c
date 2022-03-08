@@ -39,4 +39,7 @@ vec3* vec_copy(vec3* a);
 // prints a vector as the three values
 void vec_print(vec3* a, FILE* output);
 
+// normalizes the given vector, returns as a new vector structure
+vec3* vec_norm(vec3* a);
+
 #endif
