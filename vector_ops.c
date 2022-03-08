@@ -55,13 +55,23 @@ vec3 *vec_add(vec3* a, vec3* b) {
 }
 
 // returns the subtraction of the second vector from the first
+// if the first vector is NULL acts as negating
 vec3 *vec_sub(vec3* a, vec3* b) {
-	if (a == NULL || b == NULL) {
+	if (b == NULL) {
 		return NULL;
 	}
 	double x = a->x - b->x;
 	double y = a->y - b->y;
 	double z = a->z - b->z;
+	if (a == NULL) {
+		x = 0.0 - b->x;
+		y = 0.0 - b->y;
+		z = 0.0 - b->z;
+	} else {
+		x = a->x - b->x;
+		y = a->y - b->y;
+		z = a->z - b->z;
+	}
 	return three_vec(x, y, z);
 }
 
@@ -97,5 +107,18 @@ vec3* vec_copy(vec3* a) {
 
 // prints a vector as the three values
 void vec_print(vec3* a, FILE* output) {
+	if (a == NULL) {
+		return;
+	}
 	fprintf(output, "%f, %f, %f", a->x, a->y, a->z);
+}
+
+// normalizes the given vector, returns as a new vector structure
+vec3* vec_norm(vec3* a) {
+	if (a == NULL) {
+		return NULL;
+	}
+	double mag = vec_mag(a);
+	return three_vec(a->x / mag, a->y / mag, a->z / mag);
+
 }
