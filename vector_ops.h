@@ -42,4 +42,7 @@ void vec_print(vec3* a, FILE* output);
 // normalizes the given vector, returns as a new vector structure
 vec3* vec_norm(vec3* a);
 
+// multiplies a vector by a scalar
+vec3* vec_scaler(vec3* a, double b);
+
 #endif

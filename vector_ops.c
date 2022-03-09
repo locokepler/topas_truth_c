@@ -122,3 +122,11 @@ vec3* vec_norm(vec3* a) {
 	return three_vec(a->x / mag, a->y / mag, a->z / mag);
 
 }
+
+// multiplies a vector by a scalar
+vec3* vec_scaler(vec3* a, double b) {
+	if (a == NULL) {
+		return NULL;
+	}
+	return three_vec(b * a->x, b * a->y, b * a->z);
+}
