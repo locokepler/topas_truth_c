@@ -9,6 +9,7 @@
 #define ENG_RNG 0.001
 #define COMP_INT 1667457891
 #define ELECTRON_MASS 510.999
+#define SPD_LGHT 29.98
 
 #define READ_DEBUG 0
 #define GENERAL_DEBUG 0
@@ -68,17 +69,19 @@ event* read_line(FILE* source) {
 }
 
 // creates a new scatter structure and fills it
-scatter* new_scatter_old(vec3* vector, double deposited) {
+scatter* new_scatter_old(vec3* vector, double deposited, double time) {
 	scatter* new = (scatter*)malloc(sizeof(scatter));
 	new->deposit = deposited;
 	new->loc = vector;
 	new->dir = NULL;
-	new->eng_uncert = -1.;
-	new->space_uncert = -1.;
+	new->time = time;
+	new->eng_uncert = -1;
+	new->space_uncert = -1;
+	new->time_uncert = -1;
 	return new;
 }
 
-scatter* new_scatter(vec3* vector, vec3* dir, double deposit, double eng_uncert, double space_uncert) {
+scatter* new_scatter(vec3* vector, vec3* dir, double deposit, double time, double eng_uncert, double space_uncert, double time_uncert) {
 	scatter* new = (scatter*)malloc(sizeof(scatter));
 	new->deposit = deposit;
 	new->eng_uncert = eng_uncert;
@@ -89,7 +92,7 @@ scatter* new_scatter(vec3* vector, vec3* dir, double deposit, double eng_uncert,
 }
 
 scatter* copy_scatter(scatter* a) {
-	return new_scatter(vec_copy(a->loc),vec_copy(a->dir), a->deposit, a->eng_uncert, a->space_uncert);
+	return new_scatter(vec_copy(a->loc),vec_copy(a->dir), a->deposit, a->time, a->eng_uncert, a->space_uncert, a->time_uncert);
 }
 
 event* duplicate_event(event* source) {
@@ -448,9 +451,9 @@ int test_expected_energy() {
 	vec3* point_c = three_vec(0., 2., 1.73205);
 	double deposit_a = 127.405;
 	double deposit_b = 203.1654;
-	scatter* scatter_a = new_scatter_old(point_a, deposit_a);
-	scatter* scatter_b = new_scatter_old(point_b, deposit_b);
-	scatter* scatter_c = new_scatter_old(point_c, 10.);
+	scatter* scatter_a = new_scatter_old(point_a, deposit_a, -1);
+	scatter* scatter_b = new_scatter_old(point_b, deposit_b, -1);
+	scatter* scatter_c = new_scatter_old(point_c, 10., -1);
 	// run the function
 	double result = expected_energy_a(scatter_a, scatter_b, scatter_c);
 	delete_scatter(scatter_a);
@@ -948,9 +951,9 @@ llist* build_scatters(llist* detector_history, int id) {
 							ele_dir = NULL;
 						}
 						if (ele_dir == NULL) {
-							scatter_list = add_to_bottom(scatter_list, new_scatter_old(scatter_loc, ((event*)detector_history->data)->energy));
+							scatter_list = add_to_bottom(scatter_list, new_scatter_old(scatter_loc, ((event*)detector_history->data)->energy, ((event*)detector_history->data)->tof));
 						} else {
-							scatter_list = add_to_bottom(scatter_list, new_scatter(scatter_loc, ele_dir, cur_event->energy, -1, -1));
+							scatter_list = add_to_bottom(scatter_list, new_scatter(scatter_loc, ele_dir, cur_event->energy, ((event*)detector_history->data)->tof, -1, -1, -1));
 						}
 					}
 					// add the electron to the list of electrons we have checked
@@ -1025,7 +1028,7 @@ scatter** find_endpoints(llist* detector_history, double energy_percent) {
 	if (endpoint == NULL) {
 		return NULL;
 	}
-	scatter* first_endpoint = new_scatter_old(vec_copy(endpoint->loc), endpoint->deposit);
+	scatter* first_endpoint = copy_scatter(endpoint);
 	// free the old list of scatters:
 	fmap(scat_list, delete_scatter);
 	delete_list(scat_list);
@@ -1038,7 +1041,7 @@ scatter** find_endpoints(llist* detector_history, double energy_percent) {
 	if (endpoint == NULL) {
 		return NULL;
 	}
-	scatter* second_endpoint = new_scatter_old(vec_copy(endpoint->loc), endpoint->deposit);
+	scatter* second_endpoint = copy_scatter(endpoint);
 	fmap(scat_list, delete_scatter);
 	delete_list(scat_list);
 
@@ -1295,6 +1298,47 @@ int find_annih_gamma(event* item) {
 	return 0;
 }
 
+/*
+ * create_lor
+ * Takes two events and returns a LOR based on the two locations. The LOR is
+ * defined by being between the two endpoints.
+ * Method:
+ * 		To find the centerpoint it finds the physical center between the two
+ * 		locations, the displaces that along the line based on the difference
+ * 		between the times of the two endpoints. The displacement is by 
+ * 		c * (delta T) in the direction of the lower time.
+ * 		
+ * 		The length uncertanty is based on the time uncertanty of the two
+ * 		scatters and the space uncertanty
+ * 		The width uncertanty is based on the space uncertanty of the two
+ * 		scatters
+ */
+lor* create_lor(scatter* a, scatter* b) {
+	if ((a == NULL) || (b == NULL)) {
+		return NULL;
+	}
+	vec3* center_subtraction = vec_sub(a->loc, b->loc);
+	vec3* center_half = vec_scaler(center_subtraction, 0.5);
+	free(center_subtraction);
+	vec3* geometric_center = vec_add(b->loc, center_half);
+	vec3* ab_unit = vec_norm(center_half);
+	double time_delta = a->time - b->time;
+	vec3* displacement = vec_scaler(ab_unit, -SPD_LGHT * time_delta);
+	lor* new = (lor*)malloc(sizeof(lor));
+	new->center = vec_add(geometric_center, displacement);
+	new->dir = ab_unit;
+	new->cross_uncert = sqrt(a->space_uncert * a->space_uncert + b->space_uncert * b->space_uncert);
+	new->len_uncert = sqrt(a->space_uncert * a->space_uncert + b->space_uncert * b->space_uncert + 
+							a->time_uncert * a->time_uncert + b->time_uncert * b->time_uncert);
+	return new;
+}
+
+void print_lor(FILE* output, lor* lor) {
+	fprintf(output, "%f, %f, %f,", lor->center->x, lor->center->y, lor->center->z);
+	fprintf(output,  " %f, %f, %f,", lor->dir->x, lor->dir->y, lor->dir->z);
+	fprintf(output, " %f, %f", lor->len_uncert, lor->cross_uncert);
+}
+
 
 int main(int argc, char **argv) {
 	// quick reminder that argc is the number of arguments,
@@ -1451,6 +1495,11 @@ int main(int argc, char **argv) {
 				// vec_print(endpoints[0]->loc, out_in_patient);
 				// vec_print(endpoints[1]->loc, out_in_patient);
 				fprintf(out_in_patient, "\n");
+				
+				lor* result = create_lor(endpoints[0], endpoints[1]);
+				print_lor(lor_output, result);
+				fprintf(lor_output, "\n");
+
 			}
 			if (endpoints != NULL) {
 				delete_scatter(endpoints[0]);
