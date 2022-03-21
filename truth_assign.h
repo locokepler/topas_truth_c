@@ -19,20 +19,13 @@ typedef struct event_ {
 
 typedef struct scatter_ {
 	vec3* loc;
-  vec3* dir;
+	vec3* dir;
 	double deposit;
 	double eng_uncert;
 	double space_uncert;
-  double time;
-  double time_uncert;
+	double time;
+	double time_uncert;
 } scatter;
-
-typedef struct _lor {
-  vec3* center;
-  vec3* dir;
-  double len_uncert;
-  double cross_uncert;
-} lor;
 
 double energy_cutoff;
 
