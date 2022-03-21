@@ -5,6 +5,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include "vector_ops.h"
+#include "lor.h"
 
 #define ENG_RNG 0.001
 #define COMP_INT 1667457891
@@ -1319,24 +1320,36 @@ lor* create_lor(scatter* a, scatter* b) {
 	}
 	vec3* center_subtraction = vec_sub(a->loc, b->loc);
 	vec3* center_half = vec_scaler(center_subtraction, 0.5);
-	free(center_subtraction);
 	vec3* geometric_center = vec_add(b->loc, center_half);
-	vec3* ab_unit = vec_norm(center_half);
-	double time_delta = a->time - b->time;
-	vec3* displacement = vec_scaler(ab_unit, -SPD_LGHT * time_delta);
+	vec3* ba_unit = vec_norm(center_half);
+	double time_delta = b->time - a->time;
+	vec3* displacement = vec_scaler(ba_unit, SPD_LGHT * time_delta);
 	lor* new = (lor*)malloc(sizeof(lor));
 	new->center = vec_add(geometric_center, displacement);
-	new->dir = ab_unit;
-	new->cross_uncert = sqrt(a->space_uncert * a->space_uncert + b->space_uncert * b->space_uncert);
-	new->len_uncert = sqrt(a->space_uncert * a->space_uncert + b->space_uncert * b->space_uncert + 
+	new->dir = ba_unit;
+	double a_space = a->space_uncert;
+	double b_space = b->space_uncert;
+	if (a_space < 0) {
+		a_space = .1;
+	}
+	if (b_space < 0) {
+		b_space == 0.1;
+	}
+
+	new->transverse_uncert = sqrt(a_space * a_space + b_space * b_space);
+	new->long_uncert = sqrt(a_space * a_space + b_space * b_space + 
 							a->time_uncert * a->time_uncert + b->time_uncert * b->time_uncert);
+	free(center_subtraction);
+	free(center_half);
+	free(geometric_center);
+	free(displacement);
 	return new;
 }
 
 void print_lor(FILE* output, lor* lor) {
 	fprintf(output, "%f, %f, %f,", lor->center->x, lor->center->y, lor->center->z);
 	fprintf(output,  " %f, %f, %f,", lor->dir->x, lor->dir->y, lor->dir->z);
-	fprintf(output, " %f, %f", lor->len_uncert, lor->cross_uncert);
+	fprintf(output, " %f, %f", lor->long_uncert, lor->transverse_uncert);
 }
 
 
@@ -1497,6 +1510,7 @@ int main(int argc, char **argv) {
 				fprintf(out_in_patient, "\n");
 				
 				lor* result = create_lor(endpoints[0], endpoints[1]);
+				fprintf(lor_output, "%i, ", ((event*)(history->data))->number);
 				print_lor(lor_output, result);
 				fprintf(lor_output, "\n");
 
