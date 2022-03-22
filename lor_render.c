@@ -25,13 +25,13 @@ lor* read_lor(FILE* input) {
 
 	int worked;
 
-	fscanf(input, "%*i,%lf,", &center_x);
-	fscanf(input, "%lf,", &center_y);
-	fscanf(input, "%lf,", &center_z);
-	fscanf(input, "%lf,", &dir_x);
-	fscanf(input, "%lf,", &dir_y);
-	fscanf(input, "%lf,", &dir_z);
-	fscanf(input, "%lf", &longitudinal);
+	worked = fscanf(input, "%*i,%lf,", &center_x);
+	worked = fscanf(input, "%lf,", &center_y);
+	worked = fscanf(input, "%lf,", &center_z);
+	worked = fscanf(input, "%lf,", &dir_x);
+	worked = fscanf(input, "%lf,", &dir_y);
+	worked = fscanf(input, "%lf,", &dir_z);
+	worked = fscanf(input, "%lf", &longitudinal);
 	worked = fscanf(input, "%lf", &transverse);
 
 	if (worked == EOF) {
@@ -61,10 +61,11 @@ render* read_render_def(FILE* input) {
 		return NULL;
 	}
 	double x, y, z;
+	int worked;
 
-	fscanf(input, "%lf,%lf,%lf,", &x, &y, &z); // render cube corner 1
+	worked = fscanf(input, "%lf,%lf,%lf,", &x, &y, &z); // render cube corner 1
 	vec3* corner1 = three_vec(x, y, z);
-	fscanf(input, "%lf,%lf,%lf", &x, &y, &z); // render cube corner 2
+	worked = fscanf(input, "%lf,%lf,%lf", &x, &y, &z); // render cube corner 2
 	vec3* corner2 = three_vec(x, y, z);
 	vec3* low_corner = three_vec(0,0,0);
 	vec3* high_corner = three_vec(0,0,0);
@@ -92,7 +93,11 @@ render* read_render_def(FILE* input) {
 	free(corner1);
 	free(corner2);
 	int a, b, c;
-	fscanf(input, "%i,%i,%i", &a, &b, &c); // gets the number of voxels in each dimension
+	worked = fscanf(input, "%i,%i,%i", &a, &b, &c); // gets the number of voxels in each dimension
+
+	if (worked == EOF) {
+		return NULL;
+	}
 
 	// define the conversion from length space to voxel space
 	double x_convert = a / (high_corner->x - low_corner->x);
@@ -115,13 +120,13 @@ render* read_render_def(FILE* input) {
 
 	// add stuff to handle various choices of conversion here when needed.
 
-	new->combiner == NULL;
+	new->combiner = NULL;
 	return new;
 }
 
 
 vec3* space_to_vox(vec3* a, render* universe) {
-	if (a = NULL || universe == NULL) {
+	if (a == NULL || universe == NULL) {
 		return NULL;
 	}
 	// first handle the offset
@@ -156,7 +161,7 @@ int main(int argc, char const *argv[])
 {
 	// expected inputs: lor file name, output file name, rendering def file name
 	if (argc != 4) {
-		if (strcmp(argv[1], "-h") || strcmp(argv[1], "-H")) {
+		if (!strncmp(argv[1], "-h",2) || !strncmp(argv[1], "-H",2)) {
 			printf("Kepler's lor renderer: \nThis is designed to be used with");
 			printf(" the reverse kinematics code running on a TOPAS simulation.");
 			printf("\nThe code expects three files: a lor file, an output file ");
@@ -168,11 +173,11 @@ int main(int argc, char const *argv[])
 			printf("The output file is just the name you wish for it to have.\n");
 			printf("The defintion file is a set of values:\n\tcorner_1_x, ");
 			printf("corner_1_y, corner_1_z, corner_2_x, corner_2_y, corner_2_z\n\t");
-			printf("voxels_in_x, voxels_in_y, voxels_in_z");
+			printf("voxels_in_x, voxels_in_y, voxels_in_z\n");
 			// add information on selecting combination method and output type.
 		}
 		printf("Expected 3 inputs, a lor file name, an output file name and");
-		printf(" a rendering defintion file name.");
+		printf(" a rendering defintion file name.\n");
 	}
 	return 0;
 }
