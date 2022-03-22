@@ -156,7 +156,7 @@ int main(int argc, char const *argv[])
 {
 	// expected inputs: lor file name, output file name, rendering def file name
 	if (argc != 4) {
-		if (argv[1][0] == '-' && (argv[1][1] == 'h' || argv[1][1] == 'H')) {
+		if (strcmp(argv[1], "-h") || strcmp(argv[1], "-H")) {
 			printf("Kepler's lor renderer: \nThis is designed to be used with");
 			printf(" the reverse kinematics code running on a TOPAS simulation.");
 			printf("\nThe code expects three files: a lor file, an output file ");
