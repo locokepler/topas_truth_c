@@ -124,6 +124,9 @@ render* read_render_def(FILE* input) {
 	int cutoff;
 	worked = fscanf(input, "%i", &cutoff);
 
+	char* method[50];
+	worked = fscanf(input, "%s", &method);
+
 	if (worked == EOF) {
 		return NULL;
 	}
@@ -146,6 +149,14 @@ render* read_render_def(FILE* input) {
 	new->least_corner = low_corner;
 	new->max_corner = high_corner;
 	new->cutoff = cutoff;
+
+	if (!strncmp("addition", method, 8)) {
+		new->combiner = add_double;
+	} else {
+		// for if no coorect value was given (or I messed up checking them)
+		new->combiner = add_double;
+	}
+
 
 
 	// add stuff to handle various choices of conversion here when needed.
@@ -323,7 +334,17 @@ void add_lor(render* universe, lor* lor) {
 	
 }
 
-
+void print_definition(render* rend) {
+	printf("Render:\n\tDimensions:\n\t\tx: %i, y: %i, z: %i\n", rend->dimensions[0], rend->dimensions[1], rend->dimensions[2]);
+	printf("\tCorners:\n\t\t");
+	vec_print(rend->least_corner, stdout);
+	printf("\n\t\t");
+	vec_print(rend->max_corner, stdout);
+	printf("\n");
+	if (rend->combiner == add_double) {
+		printf("\tCombination method: addition\n");
+	}
+}
 
 
 
@@ -360,6 +381,30 @@ int main(int argc, char const *argv[])
 		return 1;
 	}
 	FILE* definition = fopen(argv[2], "r");
+	if (definition == NULL) {
+		fprintf(stderr, "Unable to open definition file.\n");
+		return 1;
+	}
 	master_copy = read_render_def(definition);
+	print_definition(master_copy);
+	FILE* input_lor = fopen(argv[1], "r");
+	if (input_lor == NULL) {
+		fprintf(stderr, "Unable to open LOR file.\n");
+		return 1;
+	}
+	uint iteration = 0;
+	lor* operative_lor = read_lor(input_lor);
+	while (operative_lor != NULL) {
+		add_lor(master_copy, operative_lor);
+		free(operative_lor);
+		operative_lor = read_lor(input_lor);
+		iteration++;
+		if (1000 * (iteration / 1000) == iteration) {
+			printf("iteration %i\n", iteration);
+		}
+	}
+
+
+
 	return 0;
 }

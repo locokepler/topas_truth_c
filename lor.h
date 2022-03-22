@@ -3,6 +3,8 @@
 
 #include "vector_ops.h"
 
+typedef unsigned int uint;
+
 typedef struct _lor {
   vec3* center;
   vec3* dir;
