@@ -18,7 +18,10 @@ struct _rend {
   vec3* conversion;   // multiply by to convert from length to voxel space
   vec3* least_corner; // minimum position values of render volume
   vec3* max_corner;   // maximum position values of render volume
-  void (*combiner)(render*, lor*); // adds a lor to the render
+  double cutoff;      // the cutoff beyond which no values are processed for a LOR
+  void (*combiner)(render*, double, int*); // adds a value of the lor to the render
 };
+
+render* master_copy = NULL;
 
 #endif
