@@ -147,6 +147,17 @@ void* print_event(void* in) {
 	return (void*)val;
 }
 
+void* free_lor(void* in) {
+	if (in == NULL) {
+		return NULL;
+	}
+	lor* clear = (lor*)in;
+	free(clear->center);
+	free(clear->dir);
+	free(clear);
+	return NULL;
+}
+
 // loads all of the events in a history.
 // also ends up getting the first event of the next history
 // to load it uses a function that take the file type and
@@ -1513,6 +1524,7 @@ int main(int argc, char **argv) {
 				fprintf(lor_output, "%i, ", ((event*)(history->data))->number);
 				print_lor(lor_output, result);
 				fprintf(lor_output, "\n");
+				free_lor(result);
 
 			}
 			if (endpoints != NULL) {
