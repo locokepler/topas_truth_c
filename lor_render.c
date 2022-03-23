@@ -37,7 +37,7 @@ lor* read_lor(FILE* input) {
 	worked = fscanf(input, "%lf,", &dir_x);
 	worked = fscanf(input, "%lf,", &dir_y);
 	worked = fscanf(input, "%lf,", &dir_z);
-	worked = fscanf(input, "%lf", &longitudinal);
+	worked = fscanf(input, "%lf,", &longitudinal);
 	worked = fscanf(input, "%lf", &transverse);
 
 	if (worked == EOF) {
@@ -59,6 +59,17 @@ lor* read_lor(FILE* input) {
 
 
 	return new;
+}
+
+void* free_lor(void* in) {
+	if (in == NULL) {
+		return NULL;
+	}
+	lor* clear = (lor*)in;
+	free(clear->center);
+	free(clear->dir);
+	free(clear);
+	return NULL;
 }
 
 // takes a render (for the array), a double to add to it, and the location to
@@ -121,11 +132,11 @@ render* read_render_def(FILE* input) {
 	int a, b, c;
 	worked = fscanf(input, "%i,%i,%i", &a, &b, &c); // gets the number of voxels in each dimension
 	
-	int cutoff;
-	worked = fscanf(input, "%i", &cutoff);
+	double cutoff;
+	worked = fscanf(input, "%lf", &cutoff);
 
-	char* method[50];
-	worked = fscanf(input, "%s", &method);
+	char method[50];
+	worked = fscanf(input, "%s", method);
 
 	if (worked == EOF) {
 		return NULL;
@@ -269,6 +280,9 @@ double centered_normal(double sigma, double x) {
 }
 
 void add_lor(render* universe, lor* lor) {
+	if (universe == NULL || lor == NULL) {
+		return;
+	}
 	// first define the volume in which we will be operating
 	vec3* box_diagonal = lor_box_offset(lor, universe->cutoff);
 	vec3* corner1 = vec_add(lor->center, box_diagonal);
@@ -276,6 +290,7 @@ void add_lor(render* universe, lor* lor) {
 	vec3* low_corner = three_vec(0,0,0);
 	vec3* high_corner = three_vec(0,0,0);
 	low_high_corner(corner1, corner2, low_corner, high_corner);
+	free(box_diagonal);
 	free(corner1);
 	free(corner2);
 	vec3* low_dbl_int = space_to_vox(low_corner, universe);
@@ -288,6 +303,8 @@ void add_lor(render* universe, lor* lor) {
 	int high_x = ceil(high_dbl_int->x);
 	int high_y = ceil(high_dbl_int->y);
 	int high_z = ceil(high_dbl_int->z);
+	free(low_dbl_int);
+	free(high_dbl_int);
 	if (low_x < 0) {
 		low_x = 0;
 	}
@@ -314,6 +331,8 @@ void add_lor(render* universe, lor* lor) {
 				vec3* cur_space = vox_to_space(cur_vox, universe);
 				double longitudinal = pt_to_lor_long(lor, cur_space);
 				double transverse = pt_to_lor_trans(lor, cur_space);
+				free(cur_vox);
+				free(cur_space);
 				if ((longitudinal < (universe->cutoff * lor->long_uncert))
 					&& (transverse < (universe->cutoff * lor->transverse_uncert))) {
 					// we are within the processing column (area of useful adding values)
@@ -346,9 +365,26 @@ void print_definition(render* rend) {
 	}
 }
 
+void print_lor(FILE* output, lor* lor) {
+	fprintf(output, "%f, %f, %f,", lor->center->x, lor->center->y, lor->center->z);
+	fprintf(output,  " %f, %f, %f,", lor->dir->x, lor->dir->y, lor->dir->z);
+	fprintf(output, " %f, %f", lor->long_uncert, lor->transverse_uncert);
+}
 
-
-
+void print_volume(FILE* output, render* universe) {
+	for (int i = 0; i < universe->dimensions[0]; i++) {
+		for (int j = 0; j < universe->dimensions[1]; j++) {
+			for (int k = 0; k < universe->dimensions[2]; k++) {
+				fprintf(output, "%lf ", universe->volume[i * universe->dimensions[1] * universe->dimensions[2]
+															+ j * universe->dimensions[2]
+															+ k]);
+				
+			}
+			fprintf(output, "\n");
+		}
+		// fprintf(output, "\n");
+	}
+}
 
 
 
@@ -363,8 +399,8 @@ int main(int argc, char const *argv[])
 		if (!strncmp(argv[1], "-h",2) || !strncmp(argv[1], "-H",2)) {
 			printf("Kepler's lor renderer: \nThis is designed to be used with");
 			printf(" the reverse kinematics code running on a TOPAS simulation.");
-			printf("\nThe code expects three files: a lor file, an output file ");
-			printf(" name, and a definitions file.\n");
+			printf("\nThe code expects three files: a lor file, a definitions file");
+			printf(" name, and an output file name.\n");
 			printf("The lor file should have one line of response for each history.");
 			printf(" Each lor should have the struture:\n\thistory_number,");
 			printf(" center_x, center_y, center_z, direction_x, dir_y, dir_z,");
@@ -395,8 +431,10 @@ int main(int argc, char const *argv[])
 	uint iteration = 0;
 	lor* operative_lor = read_lor(input_lor);
 	while (operative_lor != NULL) {
+		// print_lor(stdout, operative_lor);
+		// printf("\n");
 		add_lor(master_copy, operative_lor);
-		free(operative_lor);
+		free_lor(operative_lor);
 		operative_lor = read_lor(input_lor);
 		iteration++;
 		if (1000 * (iteration / 1000) == iteration) {
@@ -404,7 +442,9 @@ int main(int argc, char const *argv[])
 		}
 	}
 
+	FILE* output = fopen(argv[3], "w");
 
+	print_volume(output, master_copy);
 
 	return 0;
 }
