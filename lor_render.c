@@ -4,6 +4,12 @@
 #include <stdlib.h>
 #include "vector_ops.h"
 #include "lor.h"
+#include <pthread.h>
+
+#define MAX_THREAD_CALLS 3
+
+pthread_t tid[MAX_THREAD_CALLS];
+pthread_mutex_t volume_lock;
 
 typedef struct _intvec {
 	int a;
@@ -344,13 +350,13 @@ void add_lor(render* universe, lor* lor) {
 
 					int index[3] = {i,j,k};
 
+					pthread_mutex_lock(&volume_lock);
 					universe->combiner(universe, total_value, index);
-					
+					pthread_mutex_unlock(&volume_lock);
 				}
 			}
 		}
 	}
-	
 }
 
 void print_definition(render* rend) {
@@ -386,7 +392,16 @@ void print_volume(FILE* output, render* universe) {
 	}
 }
 
+struct _add_lor_union {
+	render* universe;
+	lor* lor;
+};
 
+void* wrapper_add_lor(struct _add_lor_union *open) {
+	add_lor(open->universe, open->lor);
+	free_lor(open->lor);
+	free(open);
+}
 
 
 
@@ -428,15 +443,41 @@ int main(int argc, char const *argv[])
 		fprintf(stderr, "Unable to open LOR file.\n");
 		return 1;
 	}
+
+	if (pthread_mutex_init(&volume_lock, NULL)) {
+		fprintf(stderr, "pthread: unable to make volume lock, exiting.\n");
+		return(1);
+	}
+
+	for (int i = 0; i < MAX_THREAD_CALLS; i++) {
+		// set the array of threads to be empty
+		tid[i] = NULL;
+	}
+
 	uint iteration = 0;
 	lor* operative_lor = read_lor(input_lor);
+
+	int cur_thread = 0;
 	while (operative_lor != NULL) {
-		// print_lor(stdout, operative_lor);
-		// printf("\n");
-		add_lor(master_copy, operative_lor);
-		free_lor(operative_lor);
+		if (tid[cur_thread] != NULL) {
+			pthread_join(tid[cur_thread], NULL);
+			tid[cur_thread] = NULL;
+		}
+		// add_lor(master_copy, operative_lor);
+
+		// lets make this multithreaded
+		struct _add_lor_union *arguments = (struct _add_lor_union *)malloc(sizeof(struct _add_lor_union));
+		arguments->universe = master_copy;
+		arguments->lor = operative_lor;
+		pthread_create(tid[cur_thread], NULL, wrapper_add_lor, arguments);
+
 		operative_lor = read_lor(input_lor);
 		iteration++;
+		if (cur_thread + 1 < MAX_THREAD_CALLS) {
+			cur_thread++;
+		} else {
+			cur_thread = 0;
+		}
 		if (1000 * (iteration / 1000) == iteration) {
 			printf("iteration %i\n", iteration);
 		}
@@ -445,6 +486,8 @@ int main(int argc, char const *argv[])
 	FILE* output = fopen(argv[3], "w");
 
 	print_volume(output, master_copy);
+
+	pthread_mutex_destroy(&volume_lock);
 
 	return 0;
 }
