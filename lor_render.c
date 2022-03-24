@@ -397,10 +397,12 @@ struct _add_lor_union {
 	lor* lor;
 };
 
-void* wrapper_add_lor(struct _add_lor_union *open) {
+void* wrapper_add_lor(void *a) {
+	struct _add_lor_union *open = (struct _add_lor_union *)a;
 	add_lor(open->universe, open->lor);
 	free_lor(open->lor);
 	free(open);
+	return 0;
 }
 
 
@@ -451,7 +453,7 @@ int main(int argc, char const *argv[])
 
 	for (int i = 0; i < MAX_THREAD_CALLS; i++) {
 		// set the array of threads to be empty
-		tid[i] = NULL;
+		tid[i] = -1;
 	}
 
 	uint iteration = 0;
@@ -459,9 +461,9 @@ int main(int argc, char const *argv[])
 
 	int cur_thread = 0;
 	while (operative_lor != NULL) {
-		if (tid[cur_thread] != NULL) {
+		if (tid[cur_thread] != -1) {
 			pthread_join(tid[cur_thread], NULL);
-			tid[cur_thread] = NULL;
+			tid[cur_thread] = -1;
 		}
 		// add_lor(master_copy, operative_lor);
 
@@ -469,7 +471,7 @@ int main(int argc, char const *argv[])
 		struct _add_lor_union *arguments = (struct _add_lor_union *)malloc(sizeof(struct _add_lor_union));
 		arguments->universe = master_copy;
 		arguments->lor = operative_lor;
-		pthread_create(tid[cur_thread], NULL, wrapper_add_lor, arguments);
+		pthread_create(&tid[cur_thread], NULL, wrapper_add_lor, arguments);
 
 		operative_lor = read_lor(input_lor);
 		iteration++;
