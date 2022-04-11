@@ -223,6 +223,50 @@ vec3* vox_to_space(vec3* a, render* universe) {
 	return offset;
 }
 
+// ceilings a vector
+void vec_ceil(vec3 *a) {
+	a->x = ceil(a->x);
+	a->y = ceil(a->y);
+	a->z = ceil(a->z);
+}
+
+// floors a vector
+void vec_floor(vec3 *a) {
+	a->x = floor(a->x);
+	a->y = floor(a->y);
+	a->z = floor(a->z);
+}
+
+/*
+ * coord_transfer
+ * takes an array of 3 doubles and an array of 3 integers. It swaps the doubles
+ * based on the numbers in the integers. The values in integers must range from
+ * 0 to 2 and not repeat.
+ * ex:
+ * 	transfer[a, b, c], spots[i,j,k];
+ * 		i=2,j=0,k=1;
+ * 	rearrange transfer to [b,c,a]
+ * The rearrangement is done in place. The passed array is modified
+ */
+void coord_transfer(double* transfer, int* spots) {
+	if ((spots[0] == spots[1]) || (spots[0] == spots[2]) || (spots[1] == spots[2])) {
+		fprintf(stderr, "coord_transfer: non-unique transfer");
+		return;
+	}
+	for (int i = 0; i < 3; i++) {
+		if ((spots[i] >= 0) && (spots[i] < 3)) {
+			fprintf(stderr, "coord_transfer: transfer to location out of array");
+			return;
+		}
+	}
+	double x = transfer[0];
+	double y = transfer[1];
+	double z = transfer[2];
+	transfer[spots[0]] = x;
+	transfer[spots[1]] = y;
+	transfer[spots[2]] = z;
+}
+
 /*
  * pt_to_lor_long
  * Gives the longitudinal distance from center of the LOR to the given point.
@@ -285,6 +329,14 @@ double centered_normal(double sigma, double x) {
 	return exp(exponent);
 }
 
+/*
+ * add_lor
+ * takes a universe and line of response. Adds the line of response to the
+ * universe. The area it iterates over is the cube that fits the entire line of
+ * response for the given cutoff within it. The iteration volume is a single
+ * cube. See add_lor_plane for the version that makes a new iteration plane for
+ * each iteration of the third axis
+ */
 void add_lor(render* universe, lor* lor) {
 	if (universe == NULL || lor == NULL) {
 		return;
@@ -357,6 +409,199 @@ void add_lor(render* universe, lor* lor) {
 			}
 		}
 	}
+}
+
+/*
+ * add_lor_plane
+ * takes a universe and line of response. Adds the line of response to the
+ * universe. This version makes a new iteration plane for
+ * each iteration of the third axis
+ */
+void add_lor_plane(render* universe, lor* lor) {
+	if (universe == NULL || lor == NULL) {
+		return;
+	}
+	// first define the volume in which we will be operating
+	vec3* box_diagonal = lor_box_offset(lor, universe->cutoff);
+	vec3* corner1 = vec_add(lor->center, box_diagonal);
+	vec3* corner2 = vec_sub(lor->center, box_diagonal);
+	vec3* low_corner = three_vec(0,0,0);
+	vec3* high_corner = three_vec(0,0,0);
+	low_high_corner(corner1, corner2, low_corner, high_corner);
+	free(box_diagonal);
+	free(corner1);
+	free(corner2);
+	vec3* low_dbl_int = space_to_vox(low_corner, universe);
+	vec3* high_dbl_int = space_to_vox(high_corner, universe);
+	free(low_corner);
+	free(high_corner);
+	int low_x = floor(low_dbl_int->x);
+	int low_y = floor(low_dbl_int->y);
+	int low_z = floor(low_dbl_int->z);
+	int high_x = ceil(high_dbl_int->x);
+	int high_y = ceil(high_dbl_int->y);
+	int high_z = ceil(high_dbl_int->z);
+	free(low_dbl_int);
+	free(high_dbl_int);
+	if (low_x < 0) {
+		low_x = 0;
+	}
+	if (low_y < 0) {
+		low_y = 0;
+	}
+	if (low_z < 0) {
+		low_z = 0;
+	}
+	if (high_x >= universe->dimensions[0]) {
+		high_x = universe->dimensions[0] - 1;
+	}
+	if (high_y >= universe->dimensions[1]) {
+		high_y = universe->dimensions[1] - 1;
+	}
+	if (high_z >= universe->dimensions[2]) {
+		high_z = universe->dimensions[2] - 1;
+	}
+	// high and low of each var now defines the maximum extent box, now we
+	// define the size of the elipse made by a cylindrical section of the LOR.
+	// the section is an elipse with semi-minor axis equal to the LOR radius and
+	// a semi-major axis of radius/sin(angle relative to the x_perpedicular plane)
+
+	vec3 x_hat;
+	x_hat.x = 1;
+	x_hat.y = 0;
+	x_hat.z = 0;
+	double lor_angle = vec_angle(&x_hat, lor->dir);
+	double semi_minor_len = lor->transverse_uncert * universe->cutoff;
+	double semi_major_len = lor->transverse_uncert / sin(lor_angle);
+
+	vec3* semi_major_dir = three_vec(0.0, lor->dir->y, lor->dir->z);
+	vec3* semi_major_dir_norm = vec_norm(semi_major_dir);
+	free(semi_major_dir);
+	vec3* semi_major = vec_scaler(semi_major_dir_norm, semi_major_len);
+	free(semi_major_dir_norm);
+
+	vec3* semi_minor_dir = vec_cross(semi_major, &x_hat);
+	vec3* semi_minor_dir_norm = vec_norm(semi_minor_dir);
+	free(semi_minor_dir);
+	vec3* semi_minor = vec_scaler(semi_minor_dir_norm, semi_minor_len);
+	free(semi_minor_dir_norm);
+
+	vec3 *elipse_box[4];
+	elipse_box[0] = vec_add(semi_major, semi_minor);
+	elipse_box[1] = vec_sub(semi_major, semi_minor);
+	vec3* negative_semi_major = vec_sub(NULL, semi_major);
+	elipse_box[2] = vec_add(negative_semi_major, semi_minor);
+	elipse_box[3] = vec_sub(negative_semi_major, semi_minor);
+
+	free(semi_major);
+	free(semi_minor);
+	free(negative_semi_major);
+
+	// make two corners, they should enclose the entire working area
+	vec3 upper_corner;
+	upper_corner.y = 0.0;
+	upper_corner.z = 0.0;
+	vec3 lower_corner;
+	lower_corner.y = 0.0;
+	lower_corner.z = 0.0;
+
+	for (int i = 0; i < 4; i++) {
+		if (elipse_box[i]->y > upper_corner.y) {
+			upper_corner.y = elipse_box[i]->y;
+		}
+		if (elipse_box[i]->z > upper_corner.z) {
+			upper_corner.z = elipse_box[i]->z;
+		}
+		if (elipse_box[i]->y < lower_corner.y) {
+			lower_corner.y = elipse_box[i]->y;
+		}
+		if (elipse_box[i]->z > lower_corner.z) {
+			lower_corner.z = elipse_box[i]->z;
+		}
+		free(elipse_box[i]);
+	}
+	free(elipse_box);
+
+	vec3* high_corner_vox = space_to_vox(&upper_corner, universe);
+	vec3* low_corner_vox = space_to_vox(&low_corner, universe);
+
+	vec_ceil(high_corner_vox);
+	vec_floor(low_corner_vox);
+
+	for (int i = low_x; i <= high_x; i++) {
+		// find the area that we will be working in. This is the box defined by
+		// high and low corner vox centered on the lor at the current x. This
+		// volume is then further constrained by the bounding box.
+		double x_dist = (low_x / universe->conversion->x) - lor->center->x;
+		double displacement = x_dist / lor->dir->x; // need to make sure it is not a divide by 0
+		vec3* travel = vec_scaler(lor->dir, displacement);
+		vec3* center = vec_add(travel, lor->center); 
+		free(travel);
+		vec3* center_vox = space_to_vox(center, universe);
+		free(center);
+		vec_ceil(center_vox);
+		int low_elipse_y = (int)low_corner_vox->y + (int)center_vox->y;
+		int high_elipse_y = (int)high_corner_vox->y + (int)center_vox->y;
+		int low_elipse_z = (int)low_corner_vox->z + (int)center_vox->z;
+		int high_elipse_z = (int)high_corner_vox->z + (int)center_vox->z;
+
+		int y_start;
+		int y_end;
+		int z_start;
+		int z_end;
+
+		if (low_elipse_y < low_y) {
+			y_start = low_y;
+		} else {
+			y_start = low_elipse_y;
+		}
+		if (low_elipse_z < low_z) {
+			z_start = low_z;
+		} else {
+			z_start = low_elipse_z;
+		}
+		if (high_elipse_y > high_y) {
+			y_end = high_y;
+		} else {
+			y_end = low_elipse_y;
+		}
+		if (low_elipse_z > high_z) {
+			z_end = high_z;
+		} else {
+			z_end = low_elipse_z;
+		}
+
+		free(center_vox);
+
+		for (int j = y_start; j <= y_end; j++) {
+			for (int k = z_start; k <= z_end; k++) {
+				// iteration over the entire space in which the lor exists
+				vec3* cur_vox = three_vec(i,j,k);
+				vec3* cur_space = vox_to_space(cur_vox, universe);
+				double longitudinal = pt_to_lor_long(lor, cur_space);
+				double transverse = pt_to_lor_trans(lor, cur_space);
+				free(cur_vox);
+				free(cur_space);
+				if ((longitudinal < (universe->cutoff * lor->long_uncert))
+					&& (transverse < (universe->cutoff * lor->transverse_uncert))) {
+					// we are within the processing column (area of useful adding values)
+					double lon_deviation = longitudinal / lor->long_uncert;
+					double trans_deviation = transverse / lor->transverse_uncert;
+					double lon_normal = centered_normal(lor->long_uncert, lon_deviation);
+					double trans_normal = centered_normal(lor->transverse_uncert, trans_deviation);
+					double total_value = lon_normal * trans_normal;
+
+					int index[3] = {i,j,k};
+
+					pthread_mutex_lock(&volume_lock);
+					universe->combiner(universe, total_value, index);
+					pthread_mutex_unlock(&volume_lock);
+				}
+			}
+		}
+	}
+	free(high_corner_vox);
+	free(low_corner_vox);
 }
 
 void print_definition(render* rend) {
