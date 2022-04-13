@@ -60,9 +60,9 @@ vec3 *vec_sub(vec3* a, vec3* b) {
 	if (b == NULL) {
 		return NULL;
 	}
-	double x = a->x - b->x;
-	double y = a->y - b->y;
-	double z = a->z - b->z;
+	double x;
+	double y;
+	double z;
 	if (a == NULL) {
 		x = 0.0 - b->x;
 		y = 0.0 - b->y;
