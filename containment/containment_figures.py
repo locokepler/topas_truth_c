@@ -6,7 +6,7 @@ from numpy.core.numeric import full
 from numpy.lib.stride_tricks import broadcast_to
 from matplotlib.ticker import MaxNLocator
 
-full_data = np.loadtxt("30_cm_0_deg_10mil", delimiter=',')
+full_data = np.loadtxt("containment/30_cm_0_deg_10mil", delimiter=',')
 relevent = full_data[:,1]
 rel_energy = full_data[:,2]
 one_scatters = full_data[full_data[:,1] == 1]
