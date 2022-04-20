@@ -6,6 +6,23 @@ from numpy.core.numeric import full
 from numpy.lib.stride_tricks import broadcast_to
 from matplotlib.ticker import MaxNLocator
 
+def plot_prettier(dpi=200, fontsize=10):
+	plt.rcParams['figure.dpi'] = dpi
+	plt.rc("savefig", dpi=dpi)
+	plt.rc('font', size=fontsize)
+	plt.rc('xtick', direction='in')
+	plt.rc('ytick', direction='in')
+	plt.rc('xtick.major', pad=5)
+	plt.rc('xtick.minor', pad=5)
+	plt.rc('ytick.major', pad=5)
+	plt.rc('ytick.minor', pad=5)
+	plt.rc('lines', dotted_pattern = [2., 2.])
+	# plt.rc('text', usetex=True)
+
+plot_prettier()
+
+
+
 full_data = np.loadtxt("containment/30_cm_0_deg_10mil", delimiter=',')
 relevent = full_data[:,1]
 rel_energy = full_data[:,2]
@@ -123,24 +140,24 @@ compt_slice.set_ylim(bottom=0)
 # X[180:250],
 font_scale = 16
 
-ax.set_xlabel('Scatters before escaping', fontsize=font_scale)
-ax.set_ylabel('% of Occurances', fontsize=font_scale)
+ax.set_xlabel('Scatters before escaping')
+ax.set_ylabel('% of Occurances')
 # ax.set_title('Number of scatters before a gamma escapes,\narriving into 30 cm of water at 45 degrees')
-ay.set_xlabel('gamma energy at escape (keV)', fontsize=font_scale)
-ay.set_ylabel('% of all gammas/keV', fontsize=font_scale)
+ay.set_xlabel('gamma energy at escape (keV)')
+ay.set_ylabel('% of all gammas/keV')
 # ay.set_title('Energy of escaping gammas,\narriving into 30 cm of water at 45 degrees')
-aw.set_xlabel('highest energy scatter number', fontsize=font_scale)
-aw.set_ylabel('% of all scatters', fontsize=font_scale)
+aw.set_xlabel('highest energy scatter number')
+aw.set_ylabel('% of all scatters')
 # aw.set_title('Brightest scatters')
-an.set_xlabel('energy deposited in highest energy scatter (keV)', fontsize=font_scale)
-an.set_ylabel('% of all scatters with given energy/keV', fontsize=font_scale)
+an.set_xlabel('energy deposited in highest energy scatter (keV)')
+an.set_ylabel('% of all scatters with given energy/keV')
 # an.set_title('Energy deposited by brightest scatter')
 
-scat_dist.set_xlabel('cm into water', fontsize=font_scale)
-scat_dist.set_ylabel('% of events/cm', fontsize=font_scale)
+scat_dist.set_xlabel('cm into water')
+scat_dist.set_ylabel('% of events/cm')
 
-compt_2d.set_xlabel('scatter angle', fontsize=font_scale)
-compt_2d.set_ylabel('deposited energy', fontsize=font_scale)
+compt_2d.set_xlabel('scatter angle')
+compt_2d.set_ylabel('deposited energy')
 
 ax.set_ylim(bottom=0.)
 ay.set_ylim(bottom=0.)
