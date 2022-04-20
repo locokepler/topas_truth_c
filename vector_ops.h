@@ -28,7 +28,7 @@ vec3 *vec_sub(vec3* a, vec3* b);
 // returns the cross product of the two vectors a X b as a new vector
 vec3 *vec_cross(vec3* a, vec3* b);
 
-// calculates the angle between two 3 vectors
+// calculates the angle between two 3 vectors in radians
 double vec_angle(vec3* a, vec3* b);
 
 // determines the distance between two vectors

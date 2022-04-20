@@ -86,7 +86,7 @@ vec3 *vec_cross(vec3* a, vec3* b) {
 	return three_vec(x,y,z);
 }
 
-// calculates the angle between two 3 vectors
+// calculates the angle between two 3 vectors in radians
 double vec_angle(vec3* a, vec3* b) {
 	if (a == NULL || b == NULL) {
 		return -1.;
