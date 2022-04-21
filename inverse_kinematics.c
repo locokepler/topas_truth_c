@@ -70,7 +70,7 @@ event* read_line(FILE* source) {
 }
 
 // creates a new scatter structure and fills it
-scatter* new_scatter_old(vec3* vector, double deposited, double time) {
+scatter* new_scatter_old(vec3d* vector, double deposited, double time) {
 	scatter* new = (scatter*)malloc(sizeof(scatter));
 	new->deposit = deposited;
 	new->loc = vector;
@@ -82,7 +82,7 @@ scatter* new_scatter_old(vec3* vector, double deposited, double time) {
 	return new;
 }
 
-scatter* new_scatter(vec3* vector, vec3* dir, double deposit, double time, double eng_uncert, double space_uncert, double time_uncert) {
+scatter* new_scatter(vec3d* vector, vec3d* dir, double deposit, double time, double eng_uncert, double space_uncert, double time_uncert) {
 	scatter* new = (scatter*)malloc(sizeof(scatter));
 	new->deposit = deposit;
 	new->eng_uncert = eng_uncert;
@@ -331,7 +331,7 @@ int in_patient(llist* list, double radius, double height, int id) {
  * array of doubles of length 3. This has the x,y,z position of the final
  * location of the positron
  */
-vec3* find_annihilation_point(llist *history) {
+vec3d* find_annihilation_point(llist *history) {
 	if (history == NULL) {
 		return NULL;
 	}
@@ -356,9 +356,9 @@ vec3* find_annihilation_point(llist *history) {
  * finds the distance from a line defined by the start and end points to a
  * given point. The distance is how far the minimum distance is.
  */
-double line_to_dot_dist(vec3* start, vec3* end, vec3* point) {
-	vec3* num_first_term = vec_sub(start, end);
-	vec3* num_sec_term = vec_sub(start, point);
+double line_to_dot_dist(vec3d* start, vec3d* end, vec3d* point) {
+	vec3d* num_first_term = vec_sub(start, end);
+	vec3d* num_sec_term = vec_sub(start, point);
 	// vec3* denom_vec = vec_sub(end, start);
 	double numerator = vec_mag(vec_cross(num_first_term, num_sec_term));
 	double denomenator = vec_mag(num_first_term);
@@ -384,9 +384,9 @@ double line_to_dot_dist(vec3* start, vec3* end, vec3* point) {
 	// first calculate the angle at b
 
 	// get the vector from b->a
-	vec3* ab = vec_sub(b->loc, a->loc);
+	vec3d* ab = vec_sub(b->loc, a->loc);
 	// get the vector from b->c
-	vec3* bc = vec_sub(c->loc, b->loc);
+	vec3d* bc = vec_sub(c->loc, b->loc);
 	// calculate the angle itself
 	double theta = vec_angle(ab, bc);
 
@@ -458,9 +458,9 @@ int test_expected_energy() {
 	// then goes to C.
 	int pass = 1;
 
-	vec3* point_a = three_vec(0., 0., 0.);
-	vec3* point_b = three_vec(0., 3., 0);
-	vec3* point_c = three_vec(0., 2., 1.73205);
+	vec3d* point_a = three_vec(0., 0., 0.);
+	vec3d* point_b = three_vec(0., 3., 0);
+	vec3d* point_c = three_vec(0., 2., 1.73205);
 	double deposit_a = 127.405;
 	double deposit_b = 203.1654;
 	scatter* scatter_a = new_scatter_old(point_a, deposit_a, -1);
@@ -703,7 +703,7 @@ double scatter_dir_dot(scatter* first, scatter* second) {
 	if (second->dir == NULL) {
 		return -1;
 	}
-	vec3* a_less_b = vec_sub(first->loc, second->loc);
+	vec3d* a_less_b = vec_sub(first->loc, second->loc);
 	double dot = vec_dot(a_less_b, second->dir);
 	free(a_less_b);
 	return dot;
@@ -783,21 +783,21 @@ scatter* multi_gamma_ele_iterator(llist* history1, llist* history2, double energ
 	for (int i = 0; i < len_hist2; i++) {
 		for (int j = 0; j < len_hist1; j++) {
 			double i_j_dot = scatter_dir_dot(scatters2[i], scatters1[j]);
-			vec3* in = vec_sub(scatters2[i]->loc, scatters1[j]->loc);
+			vec3d* in = vec_sub(scatters2[i]->loc, scatters1[j]->loc);
 			for (int k = 0; k < len_hist1; k++) {
 				// can only do 3 point checks with j and k not being the same
 				if (j != k) {
 					// first check if the direction is physical
 					if (((i_j_dot <= 0) && (i_j_dot != -1)) &&
 							(scatter_dir_dot(scatters1[k], scatters1[j]) <= 0)) {
-						vec3* out = vec_sub(scatters1[j]->loc, scatters1[k]->loc);
-						vec3* gamma_cross = vec_cross(in, out);
-						vec3* gamma_cross_norm = vec_norm(gamma_cross);
+						vec3d* out = vec_sub(scatters1[j]->loc, scatters1[k]->loc);
+						vec3d* gamma_cross = vec_cross(in, out);
+						vec3d* gamma_cross_norm = vec_norm(gamma_cross);
 						if (gamma_cross != NULL) {
 							free(gamma_cross);
 						}
-						vec3* ele_dir = vec_norm(scatters1[j]->dir);
-						vec3* plane = vec_cross(gamma_cross_norm, ele_dir);
+						vec3d* ele_dir = vec_norm(scatters1[j]->dir);
+						vec3d* plane = vec_cross(gamma_cross_norm, ele_dir);
 						if (ele_dir != NULL)
 							free(ele_dir);
 						free(gamma_cross_norm);
@@ -860,7 +860,7 @@ scatter* multi_gamma_ele_iterator(llist* history1, llist* history2, double energ
  * from a given history. The gamma is required to be from an annihilation
  * If the search fails returns zero
  */
-int closest_gamma(llist* history, vec3* target) {
+int closest_gamma(llist* history, vec3d* target) {
 	if ((history == NULL) || (target == NULL)) {
 		return 0;
 	}
@@ -943,7 +943,7 @@ llist* build_scatters(llist* detector_history, int id) {
 					int gamma_id = closest_gamma(detector_history, ((event*)detector_history->data)->location);
 					if (gamma_id == id) {
 						// time to add this electron to the scatter list
-						vec3* scatter_loc = vec_copy(((event*)detector_history->data)->location);
+						vec3d* scatter_loc = vec_copy(((event*)detector_history->data)->location);
 						event* cur_event = (event*)detector_history->data;
 						event* next_event;
 						if (detector_history->down != NULL) {
@@ -951,7 +951,7 @@ llist* build_scatters(llist* detector_history, int id) {
 						} else {
 							next_event = NULL;
 						}
-						vec3* ele_dir = NULL;
+						vec3d* ele_dir = NULL;
 						if ((next_event != NULL) && (cur_event->id == next_event->id)) {
 							ele_dir = vec_sub(next_event->location, ((event*)detector_history->data)->location);
 							if ((fabs(ele_dir->x) < 0.0001) && (fabs(ele_dir->y) < 0.0001) && (fabs(ele_dir->z) < 0.0001)) {
@@ -1279,7 +1279,7 @@ scatter** find_endpoints_ele_dir(llist* detector_history, double energy_percent)
  * annihilation. If there is a problem (such as not having two endpoints) it
  * returns -1 as a reject value.
  */
-double first_scat_miss(scatter** endpoints, vec3* annh_loc) {
+double first_scat_miss(scatter** endpoints, vec3d* annh_loc) {
 	if ((endpoints == NULL) || (annh_loc == NULL)) {
 		return -1.;
 	}
@@ -1288,9 +1288,9 @@ double first_scat_miss(scatter** endpoints, vec3* annh_loc) {
 	}
 	// find the scattering point of the first scatter
 
-	vec3* first_spot = vec_copy(endpoints[0]->loc);
+	vec3d* first_spot = vec_copy(endpoints[0]->loc);
 
-	vec3* second_spot = vec_copy(endpoints[1]->loc);
+	vec3d* second_spot = vec_copy(endpoints[1]->loc);
 
 	return line_to_dot_dist(first_spot, second_spot, annh_loc);
 }
@@ -1329,12 +1329,12 @@ lor* create_lor(scatter* a, scatter* b) {
 	if ((a == NULL) || (b == NULL)) {
 		return NULL;
 	}
-	vec3* center_subtraction = vec_sub(a->loc, b->loc);
-	vec3* center_half = vec_scaler(center_subtraction, 0.5);
-	vec3* geometric_center = vec_add(b->loc, center_half);
-	vec3* ba_unit = vec_norm(center_half);
+	vec3d* center_subtraction = vec_sub(a->loc, b->loc);
+	vec3d* center_half = vec_scaler(center_subtraction, 0.5);
+	vec3d* geometric_center = vec_add(b->loc, center_half);
+	vec3d* ba_unit = vec_norm(center_half);
 	double time_delta = b->time - a->time;
-	vec3* displacement = vec_scaler(ba_unit, SPD_LGHT * time_delta);
+	vec3d* displacement = vec_scaler(ba_unit, SPD_LGHT * time_delta);
 	lor* new = (lor*)malloc(sizeof(lor));
 	new->center = vec_add(geometric_center, displacement);
 	new->dir = ba_unit;
@@ -1487,7 +1487,7 @@ int main(int argc, char **argv) {
 				fprintf(out_in_patient, "%f, ", -1.0);
 			} else {
 					// now we need to find the distance by which the endpoints miss
-				vec3* annh_loc = find_annihilation_point(history);
+				vec3d* annh_loc = find_annihilation_point(history);
 				double miss_dist = first_scat_miss(endpoints, annh_loc);
 				delete_scatter(endpoints[0]);
 				delete_scatter(endpoints[1]); 
@@ -1510,7 +1510,7 @@ int main(int argc, char **argv) {
 				fprintf(out_in_patient, "%i,%i,%i,%i\n", -1, -1, -1, -1);
 			} else {
 					// now we need to find the distance by which the endpoints miss
-				vec3* annh_loc = find_annihilation_point(history);
+				vec3d* annh_loc = find_annihilation_point(history);
 				double miss_dist = first_scat_miss(endpoints, annh_loc);
 
 				fprintf(out_in_patient, "%f, ", miss_dist);

@@ -10,7 +10,7 @@ typedef struct event_ {
   uint number;
   double energy;
   double depoisted;
-  vec3* location;
+  vec3d* location;
   double tof;
   int particle;
   char orgin[22];
@@ -18,8 +18,8 @@ typedef struct event_ {
 } event;
 
 typedef struct scatter_ {
-	vec3* loc;
-	vec3* dir;
+	vec3d* loc;
+	vec3d* dir;
 	double deposit;
 	double eng_uncert;
 	double space_uncert;

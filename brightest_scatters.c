@@ -306,8 +306,8 @@ double* first_scat_ang_eng(llist* history) {
 	event* second = history->data;
 	history = history->down;
 	event* third = history->data;
-	vec3* in_vec = vec_sub(first->location, second->location);
-	vec3* out_vec = vec_sub(second->location, third->location);
+	vec3d* in_vec = vec_sub(first->location, second->location);
+	vec3d* out_vec = vec_sub(second->location, third->location);
 	double dot = vec_dot(in_vec, out_vec);
 	double angle = acos(dot / (vec_mag(in_vec) * vec_mag(out_vec)));
 	double energy = first->energy - second->energy;
