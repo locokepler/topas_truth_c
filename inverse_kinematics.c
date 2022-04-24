@@ -538,7 +538,7 @@ scatter* scattering_iterator(llist* scatter_list, double energy_percent) {
 
 
 	double hypoth;
-	double second_best = 0;
+	// double second_best = 0;
 	// now to iterate over all of the loop possibilites
 	for (int first = 0; first < list_len; first++)
 	{
@@ -560,7 +560,7 @@ scatter* scattering_iterator(llist* scatter_list, double energy_percent) {
 							printf("\n");
 						}
 
-						second_best = best_find;
+						// second_best = best_find;
 						best_find = hypoth;
 						best_scatter = locations[first];
 					}
@@ -729,8 +729,8 @@ double scatter_dir_dot(scatter* first, scatter* second) {
  * 
  * energy_percent: what the percentage cut is for acceptable scattering
  */
-scatter* multi_gamma_ele_iterator(llist* history1, llist* history2, double energy_percent) {
-	if ((history1 == NULL) || (history2 == NULL)) {
+scatter* multi_gamma_ele_iterator(llist* history_near, llist* history_far, double energy_percent) {
+	if ((history_near == NULL) || (history_far == NULL)) {
 		fprintf(stderr, "multi_gamma_ele_iterator: empty history given");
 		return NULL;
 	}
@@ -742,29 +742,29 @@ scatter* multi_gamma_ele_iterator(llist* history1, llist* history2, double energ
 
 	scatter* best_scatter = NULL;
 
-	int len_hist1 = list_length(history1);
-	int len_hist2 = list_length(history2);
+	int len_hist_near = list_length(history_near);
+	int len_hist_far = list_length(history_far);
 
-	if (len_hist1 < 2) {
+	if (len_hist_near < 2) {
 		// history1 is too short to run the iteration process.
 		return NULL;
 	}
-	if (len_hist2 < 1) {
+	if (len_hist_far < 1) {
 		// idk if it is possible to even get here, but we can't continue if we do
 		return NULL;
 	}
 
 	// time to turn the scattering list into an array for fast access
-	scatter** scatters1 = (scatter**)malloc(len_hist1 * sizeof(scatter*));
-	for (int i = 0; i < len_hist1; i++)	{
-		scatters1[i] = (scatter*)history1->data;
-		history1 = history1->down;
+	scatter** scatters_near = (scatter**)malloc(len_hist_near * sizeof(scatter*));
+	for (int i = 0; i < len_hist_near; i++)	{
+		scatters_near[i] = (scatter*)history_near->data;
+		history_near = history_near->down;
 	}
 
-	scatter** scatters2 = (scatter**)malloc(len_hist2 * sizeof(scatter*));
-	for (int i = 0; i < len_hist2; i++)	{
-		scatters2[i] = (scatter*)history2->data;
-		history2 = history2->down;
+	scatter** scatters_far = (scatter**)malloc(len_hist_far * sizeof(scatter*));
+	for (int i = 0; i < len_hist_far; i++)	{
+		scatters_far[i] = (scatter*)history_far->data;
+		history_far = history_far->down;
 	}
 
 	// a couple of variables for debug information
@@ -772,31 +772,31 @@ scatter* multi_gamma_ele_iterator(llist* history1, llist* history2, double energ
 	double second_best = 0;
 	int run_num;
 	if (predicted_vs_real[0] == 0) {
-		run_num = 1;
+		run_num = 0;
 	} else {
-		run_num = 2;
+		run_num = 1;
 	}
 
 	// time to iterate over all of the possible combinations. The avaliable
 	// configurations are:
 	// for all i in len_hist2 and all of j != k in len_hist1
-	for (int i = 0; i < len_hist2; i++) {
-		for (int j = 0; j < len_hist1; j++) {
-			double i_j_dot = scatter_dir_dot(scatters2[i], scatters1[j]);
-			vec3d* in = vec_sub(scatters2[i]->loc, scatters1[j]->loc);
-			for (int k = 0; k < len_hist1; k++) {
+	for (int i = 0; i < len_hist_far; i++) {
+		for (int j = 0; j < len_hist_near; j++) {
+			double i_j_dot = scatter_dir_dot(scatters_far[i], scatters_near[j]);
+			vec3d* in = vec_sub(scatters_far[i]->loc, scatters_near[j]->loc);
+			for (int k = 0; k < len_hist_near; k++) {
 				// can only do 3 point checks with j and k not being the same
 				if (j != k) {
 					// first check if the direction is physical
 					if (((i_j_dot <= 0) && (i_j_dot != -1)) &&
-							(scatter_dir_dot(scatters1[k], scatters1[j]) <= 0)) {
-						vec3d* out = vec_sub(scatters1[j]->loc, scatters1[k]->loc);
+							(scatter_dir_dot(scatters_near[k], scatters_near[j]) <= 0)) {
+						vec3d* out = vec_sub(scatters_near[j]->loc, scatters_near[k]->loc);
 						vec3d* gamma_cross = vec_cross(in, out);
 						vec3d* gamma_cross_norm = vec_norm(gamma_cross);
 						if (gamma_cross != NULL) {
 							free(gamma_cross);
 						}
-						vec3d* ele_dir = vec_norm(scatters1[j]->dir);
+						vec3d* ele_dir = vec_norm(scatters_near[j]->dir);
 						vec3d* plane = vec_cross(gamma_cross_norm, ele_dir);
 						if (ele_dir != NULL)
 							free(ele_dir);
@@ -807,21 +807,21 @@ scatter* multi_gamma_ele_iterator(llist* history1, llist* history2, double energ
 
 						if ((plane == NULL) || (vec_mag(plane) > 0.0)) {
 
-							hypoth = expected_energy_b(scatters2[i], scatters1[j], scatters1[k]);
+							hypoth = expected_energy_b(scatters_far[i], scatters_near[j], scatters_near[k]);
 							// check if the hypothesis is better than previous
 							if (fabs(hypoth - ELECTRON_MASS) < fabs(best_find - ELECTRON_MASS)) {
 								// the current hypthesis is better than the previous best
 								if (GENERAL_DEBUG) {
 									printf("multi_gamma_ele_iterator: new best scatter found:\n");
 									printf("%f keV at ", hypoth);
-									vec_print(scatters1[j]->loc, stdout);
+									vec_print(scatters_near[j]->loc, stdout);
 									printf("\n");
 								}
 								second_best = best_find;
 								best_find = hypoth;
-								best_scatter = scatters1[j];
-								predicted_vs_real[2 * (run_num - 1)] = j + 1;
-								predicted_vs_real[2 * (run_num - 1) + 1] = k + 1;
+								best_scatter = scatters_near[j];
+								predicted_vs_real[(2 * run_num)] = len_hist_near - j;
+								predicted_vs_real[(2 * run_num) + 1] = len_hist_near - k;
 							}				
 						}
 						free(plane);
@@ -838,8 +838,8 @@ scatter* multi_gamma_ele_iterator(llist* history1, llist* history2, double energ
 		second_scat_hypot = fabs(best_find - second_best);
 	}
 
-	free(scatters1);
-	free(scatters2);
+	free(scatters_near);
+	free(scatters_far);
 	// done iterating, now have the best scatter found in the list
 	if (fabs(best_find - ELECTRON_MASS) < (energy_percent * ELECTRON_MASS)) {
 		// the result was within the energy cut
@@ -1272,27 +1272,70 @@ scatter** find_endpoints_ele_dir(llist* detector_history, double energy_percent)
 	return return_vals;
 }
 
-/* 
- * first_scat_miss:
- * Takes the two endpoints and a 3-vector defining the location of the
- * annihilation and finds the distance between the line-of-responce and the
- * annihilation. If there is a problem (such as not having two endpoints) it
- * returns -1 as a reject value.
+
+
+
+
+
+
+// /* 
+//  * first_scat_miss_transverse:
+//  * Takes the two endpoints and a 3-vector defining the location of the
+//  * annihilation and finds the distance between the line-of-responce and the
+//  * annihilation. If there is a problem (such as not having two endpoints) it
+//  * returns -1 as a reject value.
+//  */
+// double first_scat_miss_transverse(scatter** endpoints, vec3d* annh_loc) {
+// 	if ((endpoints == NULL) || (annh_loc == NULL)) {
+// 		return -1;
+// 	}
+// 	if ((endpoints[0] == NULL) || (endpoints[1] == NULL)) {
+// 		return -1;
+// 	}
+// 	// find the scattering point of the first scatter
+
+// 	vec3d* first_spot = vec_copy(endpoints[0]->loc);
+
+// 	vec3d* second_spot = vec_copy(endpoints[1]->loc);
+
+// 	return line_to_dot_dist(first_spot, second_spot, annh_loc);
+// }
+
+/* first_scat_miss_transverse:
+ * takes a LOR and the location of the annihilation and returns the transverse
+ * distance between the two. That is: the distance between the center of the LOR
+ * and the annihilation location perpendicular to the direction of the LOR
  */
-double first_scat_miss(scatter** endpoints, vec3d* annh_loc) {
-	if ((endpoints == NULL) || (annh_loc == NULL)) {
-		return -1.;
+double first_scat_miss_transverse(lor* lor, vec3d* annh_loc) {
+	if ((lor == NULL) || (annh_loc == NULL)) {
+		return -1;
 	}
-	if ((endpoints[0] == NULL) || (endpoints[1] == NULL)) {
-		return -1.;
+	vec3d* offset = vec_sub(annh_loc, lor->center);
+	vec3d* perpendicular = vec_cross(offset, lor->dir);
+	double dist = vec_mag(perpendicular);
+	free(offset);
+	free(perpendicular);
+	return dist;
+}
+
+/* first_scat_miss_longitudinal:
+ * takes a LOR and the location of the annihilation and returns the
+ * longitudinal distance between the two. That is: the distance between the
+ * center of the LOR and the annihilation projected onto the direction of the
+ * LOR.
+ */
+double first_scat_miss_longitudinal(lor* lor, vec3d* annh_loc) {
+	if ((lor == NULL) || (annh_loc == NULL)) {
+		return -1;
 	}
-	// find the scattering point of the first scatter
-
-	vec3d* first_spot = vec_copy(endpoints[0]->loc);
-
-	vec3d* second_spot = vec_copy(endpoints[1]->loc);
-
-	return line_to_dot_dist(first_spot, second_spot, annh_loc);
+	vec3d* offset = vec_sub(annh_loc, lor->center);
+	double offset_dist = vec_mag(offset);
+	if (offset_dist < ENG_RNG) {
+		return offset_dist;
+	}
+	double dist = vec_dot(offset, lor->dir);
+	free(offset);
+	return dist;
 }
 
 /* 
@@ -1344,7 +1387,7 @@ lor* create_lor(scatter* a, scatter* b) {
 		a_space = .1;
 	}
 	if (b_space < 0) {
-		b_space == 0.1;
+		b_space = 0.1;
 	}
 
 	new->transverse_uncert = sqrt(a_space * a_space + b_space * b_space);
@@ -1415,8 +1458,9 @@ int main(int argc, char **argv) {
 	}
 
 	fprintf(out_in_patient, "history number, in patient scatter occurance, ");
-	fprintf(out_in_patient, "first algorithem miss distance, second algo miss dist, ");
-	fprintf(out_in_patient, "delta first hypot (2ed algo), delta sec hypot (2ed algo)\n");
+	fprintf(out_in_patient, "algo miss dist transverse, algo miss dist longitudinal,");
+	fprintf(out_in_patient, "delta first hypot, delta sec hypot, alpha 1, beta 1, ");
+	fprintf(out_in_patient, "alpha 2, beta 2\n");
 
 	// current loop version, just for testing
 	llist *history = load_history(in_histories, read_line);
@@ -1480,50 +1524,41 @@ int main(int argc, char **argv) {
 		if (((event*)in_det_hist->data)->number == ((event*)history->data)->number) {
 			// first we need to find the location of the endpoint scatters
 
-			// first run on old code
-			scatter** endpoints = find_endpoints_2hist(in_det_hist, energy_cutoff);
-
-			if (endpoints == NULL) {
-				fprintf(out_in_patient, "%f, ", -1.0);
-			} else {
-					// now we need to find the distance by which the endpoints miss
-				vec3d* annh_loc = find_annihilation_point(history);
-				double miss_dist = first_scat_miss(endpoints, annh_loc);
-				delete_scatter(endpoints[0]);
-				delete_scatter(endpoints[1]); 
-				free(endpoints);
-
-
-				fprintf(out_in_patient, "%f, ", miss_dist); 
-			}
-			first_scat_hypot = 0;
+			first_scat_hypot = 0; // energy differences between hypotheses
 			second_scat_hypot = 0;
+
 			predicted_vs_real[0] = 0;
 			predicted_vs_real[1] = 0;
 			predicted_vs_real[2] = 0;
 			predicted_vs_real[3] = 0;
 
-			endpoints = find_endpoints_ele_dir(in_det_hist, energy_cutoff);
+			scatter** endpoints = find_endpoints_ele_dir(in_det_hist, energy_cutoff);
 
 			if (endpoints == NULL) {
-				fprintf(out_in_patient, "%f, %f, %f,", -1.0, -1.0, -1.0);
+				fprintf(out_in_patient, "%f, %f, %f, %f, ", -1.0, -1.0, -1.0, -1.0);
 				fprintf(out_in_patient, "%i,%i,%i,%i\n", -1, -1, -1, -1);
 			} else {
-					// now we need to find the distance by which the endpoints miss
-				vec3d* annh_loc = find_annihilation_point(history);
-				double miss_dist = first_scat_miss(endpoints, annh_loc);
+				// create the LOR
+				lor* result = create_lor(endpoints[0], endpoints[1]);
+				fprintf(lor_output, "%i, ", ((event*)(history->data))->number);
+				print_lor(lor_output, result);
+				fprintf(lor_output, "\n");
 
-				fprintf(out_in_patient, "%f, ", miss_dist);
+				// now we need to find the distance by which the endpoints miss
+				vec3d* annh_loc = find_annihilation_point(history);
+				double miss_dist_trans = first_scat_miss_transverse(result, annh_loc);
+				double miss_dist_long = first_scat_miss_longitudinal(result, annh_loc);
+
+
+
+				fprintf(out_in_patient, "%f, ", miss_dist_trans);
+				fprintf(out_in_patient, "%f, ", miss_dist_long);
 				fprintf(out_in_patient, "%f, %f,", first_scat_hypot, second_scat_hypot);
 				fprintf(out_in_patient, "%i, %i, %i, %i", predicted_vs_real[0],predicted_vs_real[1],predicted_vs_real[2],predicted_vs_real[3]);
 				// vec_print(endpoints[0]->loc, out_in_patient);
 				// vec_print(endpoints[1]->loc, out_in_patient);
 				fprintf(out_in_patient, "\n");
 				
-				lor* result = create_lor(endpoints[0], endpoints[1]);
-				fprintf(lor_output, "%i, ", ((event*)(history->data))->number);
-				print_lor(lor_output, result);
-				fprintf(lor_output, "\n");
 				free_lor(result);
 
 			}
