@@ -95,7 +95,7 @@ int rec_delete_list(llist* list) {
 	}
 	if (list->data != NULL) {
 		// to avoid memory leak will send error message if data not NULL
-		fprintf(stderr, "delete_list error: deleted list not NULL");
+		fprintf(stderr, "delete_list error: deleted list not NULL\n");
 		rec_delete_list(list->down);
 		free(list);
 		return 0;
