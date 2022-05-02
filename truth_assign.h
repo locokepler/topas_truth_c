@@ -17,6 +17,12 @@ typedef struct event_ {
   int id;
 } event;
 
+typedef struct scatter_truth_ {
+	int true_n;
+	double true_eng;
+	double true_time;
+} scatter_truth;
+
 typedef struct scatter_ {
 	vec3d* loc;
 	vec3d* dir;
@@ -25,7 +31,9 @@ typedef struct scatter_ {
 	double space_uncert;
 	double time;
 	double time_uncert;
+	scatter_truth* truth;
 } scatter;
+
 
 double energy_cutoff;
 
