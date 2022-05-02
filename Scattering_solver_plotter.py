@@ -2,26 +2,26 @@ import numpy as np
 import matplotlib.pyplot as plt
 from numpy.core.numeric import full
 
-full_data = np.loadtxt("test", delimiter=',', skiprows=1)
+full_data = np.loadtxt("sim_out.debug", delimiter=',', skiprows=1)
 #no_in_pat = full_data[full_data[:,1] == 0]
-original_algo = full_data[:,2] #no_in_pat[:,2]
-new_algo = full_data[:,3]
+transverse_miss = full_data[:,2] #no_in_pat[:,2]
+long_miss = full_data[:,3]
 # print(relevent[0:10])
 alpha_scat = full_data[:,6]
 alpha_scat = np.append(alpha_scat,full_data[:,8])
 beta_scat = full_data[:,7]
 beta_scat = np.append(beta_scat, full_data[:,9])
 
-a_orginal = original_algo[original_algo > 0]
-a_new = new_algo[new_algo > 0]
+tran_miss_clean = transverse_miss[transverse_miss > 0]
+long_miss_clean = long_miss[long_miss > 0]
 
 given_bins = np.logspace(np.log10(0.0001), np.log10(10), 100)
 
 # hist, bins = np.histogram(relevent, bins=given_bins, range=(0,100))
 
-hist_original, bins_original = np.histogram(a_orginal, bins=40, range=(0,80))
-hist_new, bins_new = np.histogram(a_new, bins=40, range=(0, 80))
-log_new, log_bins_new = np.histogram(a_new, bins=given_bins, range=(.0001,10))
+hist_trans, bins_trans = np.histogram(tran_miss_clean, bins=40, range=(0,20))
+hist_long, bins_long = np.histogram(long_miss_clean, bins=40, range=(0, 20))
+log_long, log_bins_long = np.histogram(long_miss_clean, bins=given_bins, range=(.0001,10))
 
 alpha_hist, alpha_bins = np.histogram(alpha_scat, bins=10, range=(1,10))
 beta_hist, beta_bins = np.histogram(beta_scat, bins=10, range=(1,10))
@@ -34,10 +34,10 @@ fig, ay = plt.subplots()
 fig, az = plt.subplots()
 fig, az2 = plt.subplots()
 
-ax.plot(bins_original[:-1], hist_original, 'Dk', label = 'LOR miss for 1 gamma solution')
-ay.plot(bins_new[:-1], hist_new, 'Dk', label = 'LOR miss for 2 gamma solution')
-az.plot(log_bins_new[:-1], log_new, 'Dk', label = 'LOR miss distance for 2 gamma solution')
-az2.plot(log_bins_new[:-1], np.log(log_new), 'Dk', label = 'LOR miss distance for 2 gamma solution')
+ax.plot(bins_trans[:-1], hist_trans, 'Dk', label = 'LOR miss transverse')
+ay.plot(bins_long[:-1], hist_long, 'Dk', label = 'LOR miss longitudinal')
+az.plot(log_bins_long[:-1], log_long, 'Dk', label = 'LOR miss distance longitudinal')
+az2.plot(log_bins_long[:-1], np.log(log_long), 'Dk', label = 'LOR miss distance for 2 gamma solution')
 
 
 ax.set_ylim(bottom=0.)
