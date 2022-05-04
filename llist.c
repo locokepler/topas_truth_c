@@ -16,10 +16,10 @@ llist* add_to_top(llist* list, void* data) {
 	// ok the list exists, now get to top, then add an entry
 	list = list_head(list);
 	llist *new_top = (llist*)malloc(sizeof(llist));
-	new_top->down = NULL;
-	new_top->up = list;
+	new_top->up = NULL;
+	new_top->down = list;
 	new_top->data = data;
-	list->down = new_top;
+	list->up = new_top;
 	return list;
 }
 
