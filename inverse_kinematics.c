@@ -87,6 +87,7 @@ scatter* new_scatter_old(vec3d* vector, double deposited, double time) {
 	new->eng_uncert = -1;
 	new->space_uncert = -1;
 	new->time_uncert = -1;
+	new->truth = NULL;
 	return new;
 }
 
@@ -97,11 +98,22 @@ scatter* new_scatter(vec3d* vector, vec3d* dir, double deposit, double time, dou
 	new->space_uncert = space_uncert;
 	new->loc = vector;
 	new->dir = dir;
+	new->time = time;
+	new->time_uncert = time_uncert;
+	new->truth = NULL;
 	return new;
 }
 
 scatter* copy_scatter(scatter* a) {
-	return new_scatter(vec_copy(a->loc),vec_copy(a->dir), a->deposit, a->time, a->eng_uncert, a->space_uncert, a->time_uncert);
+	scatter* new = new_scatter(vec_copy(a->loc),vec_copy(a->dir), a->deposit, a->time, a->eng_uncert, a->space_uncert, a->time_uncert);
+	if (a->truth != NULL) {
+		scatter_truth* new_true = (scatter_truth*)malloc(sizeof(scatter_truth));
+		new_true->true_eng  = a->truth->true_eng;
+		new_true->true_n    = a->truth->true_n;
+		new_true->true_time = a->truth->true_time;
+		new->truth = new_true;
+	}
+	return new;
 }
 
 event* duplicate_event(event* source) {
@@ -124,6 +136,9 @@ void* delete_scatter(void* in) {
 	}
 	free(((scatter*)in)->loc);
 	free(((scatter*)in)->dir);
+	if (((scatter*)in)->truth != NULL) {
+		free(((scatter*)in)->truth);
+	}
 	free(in);
 	return NULL;
 }
@@ -266,7 +281,7 @@ int partition(void** array, int low, int high, int (*f)(void*, void*)) {
 	int i = low - 1;
 	// the current best location for the pivot
 	for (int j = low; j < high - 1; j++) {
-		if (f(array[j], pivot) < 0) {
+		if (f(array[j], pivot) > 0) {
 			i++;
 			void** holding = array[j];
 			array[j] = array[i];
@@ -1062,6 +1077,9 @@ double recursive_search(double best, double current, double inc_eng, scatter* or
 						delete_list(best_continuing_path);
 					}
 					best_continuing_path = continuing_path;
+				} else {
+					fmap(continuing_path, free_null);
+					delete_list(continuing_path);
 				}
 			} else {
 				fmap(continuing_path, free_null);
@@ -1186,7 +1204,9 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 
 
 	free(scatters_near);
+	free(scatters_near_short);
 	free(scatters_far);
+	free(scatters_far_short);
 
 
 	return best_scatter;
@@ -1304,12 +1324,12 @@ llist* build_scatters(llist* detector_history, int id) {
 						scatter* add_scatter;
 						if (ele_dir == NULL) {
 							
-							add_scatter = new_scatter(scatter_loc, NULL, cur_event->energy, cur_event->tof, DEP_UNCERT, SPC_UNCERT, -1);
+							add_scatter = new_scatter(scatter_loc, NULL, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, -1);
 						} else {
 							// normalize the electron direction
 							vec3d* ele_dir_norm = vec_norm(ele_dir);
 							free(ele_dir);
-							add_scatter = new_scatter(scatter_loc, ele_dir_norm, cur_event->energy, cur_event->tof, DEP_UNCERT, SPC_UNCERT, -1);
+							add_scatter = new_scatter(scatter_loc, ele_dir_norm, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, -1);
 						}
 						scatter_truth* truth_info = (scatter_truth*)malloc(sizeof(scatter_truth));
 						truth_info->true_eng = cur_event->energy;
@@ -1689,6 +1709,12 @@ scatter** find_endpoints_stat(llist* detector_history, double sigma_per_scatter)
 		}
 		return NULL;
 	}
+	// clear the alpha_n arrays
+	for (int i = 0; i < FIRST_N; i++) {
+		alpha_n_1[i] = -1;
+		alpha_n_2[i] = -1;
+	}
+
 	// run the actual finding of endpoint 1
 	scatter* endpoint1 = multi_gamma_stat_iteration(scat_list1, scat_list2, sigma_per_scatter, alpha_n_1);
 	// now do the same with endpoint 2
@@ -1844,7 +1870,7 @@ lor* create_lor(scatter* a, scatter* b) {
 	vec3d* center_half = vec_scaler(center_subtraction, 0.5);
 	vec3d* geometric_center = vec_add(b->loc, center_half);
 	vec3d* ba_unit = vec_norm(center_half);
-	double time_delta = b->time - a->time;
+	double time_delta = 0.5 * (b->time - a->time);
 	vec3d* displacement = vec_scaler(ba_unit, SPD_LGHT * time_delta);
 	lor* new = (lor*)malloc(sizeof(lor));
 	new->center = vec_add(geometric_center, displacement);
@@ -1900,8 +1926,8 @@ int main(int argc, char **argv) {
 		printf("Unable to open detector history file\n");
 		return 1;
 	}
-	char* debug_file = (char*)malloc(sizeof(char) * strlen(argv[3] + 10));
-	char* lor_file = (char*)malloc(sizeof(char) * strlen(argv[3] + 10));
+	char* debug_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
+	char* lor_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
 	strcpy(debug_file, argv[3]);
 	strcpy(lor_file, argv[3]);
 	debug_file = strcat(debug_file, ".debug");

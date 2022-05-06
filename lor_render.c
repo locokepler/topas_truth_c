@@ -745,6 +745,7 @@ int main(int argc, char const *argv[])
 		arguments->universe = master_copy;
 		arguments->lor = operative_lor;
 		pthread_create(&tid[cur_thread], NULL, wrapper_add_lor, arguments);
+		// pthread_create(&tid[cur_thread], NULL, wrapper_add_lor_plane, arguments);
 
 		operative_lor = read_lor(input_lor);
 		iteration++;
