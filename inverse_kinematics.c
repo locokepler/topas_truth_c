@@ -1067,6 +1067,9 @@ double recursive_search(double best, double current, double inc_eng, scatter* or
 			free(new_array);
 			if (below < better_find) {
 				better_find = below;
+				if (below < best) {
+					best = below;
+				}
 
 				// begin N vs alpha work
 				scatter_truth* current_truth = remaining[i]->truth;
@@ -1174,6 +1177,7 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 
 			if (try < best_find) {
 				best_scatter = scatters_near[j];
+				best_find = try;
 				if (best_found_path != NULL) {
 					fmap(best_found_path, free_null);
 					delete_list(best_found_path);
