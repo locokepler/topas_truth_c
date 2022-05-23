@@ -19,6 +19,7 @@
 
 #define READ_DEBUG 0
 #define GENERAL_DEBUG 0
+#define TREE_DEBUG 0
 
 int alpha_n_1[FIRST_N];
 int alpha_n_2[FIRST_N];
@@ -406,6 +407,7 @@ int in_patient(llist* list, double radius, double height, int id) {
  * annihilation occured it returns NULL. If one did occur it returns an
  * array of doubles of length 3. This has the x,y,z position of the final
  * location of the positron
+ * If it does not find an annihilation point it returns NULL
  */
 vec3d* find_annihilation_point(llist *history) {
 	if (history == NULL) {
@@ -999,15 +1001,40 @@ scatter** build_array_no_i(scatter** source, uint source_len, uint i) {
 
 double recursive_search(double best, double current, double inc_eng, scatter* origin, scatter* loc, scatter** remaining, uint remain_count, llist** path) {
 	if ((loc == NULL) || (remaining == NULL) || (origin == NULL) ||(remain_count == 0)) {
+		if (TREE_DEBUG) {
+			printf("recursive_search: end of branch\n");
+		}
+		if ((loc != NULL) && (path != NULL) && (loc->truth != NULL)) {
+			int* best_N_return = (int*)malloc(sizeof(int));
+			best_N_return[0] = loc->truth->true_n;
+			path[0] = add_to_top(NULL, best_N_return);
+		}
 		return current;
 	}
 	if (best < current) {
 		// the best find is better than our current find, we are not doing well
+		if (TREE_DEBUG) {
+			printf("recursive_search: best better than current\n");
+		}
 		return current;
 	}
 
 	double OUT_OF_PLANE_WEIGHT = 2.; // how many sigma a 90 deg out of plane
 	// scatter counts for 
+	if (TREE_DEBUG) {
+		printf("recursive_search: Origin N = ");
+		if (origin->truth != NULL) {
+			printf("%i, N = ", origin->truth->true_n);
+		} else {
+			printf("MISSING, N = ");
+		}
+		if (loc->truth != NULL) {
+			printf("%i, ", loc->truth->true_n);
+		} else {
+			printf("MISSING, ");
+		}
+		printf("best = %lf, current = %lf\n", best, current);
+	}
 
 	double energy_uncert;
 	vec3d* in = vec_sub(origin->loc, loc->loc);
@@ -1017,7 +1044,6 @@ double recursive_search(double best, double current, double inc_eng, scatter* or
 	// begin N vs alpha work
 	llist* continuing_path = NULL;
 	llist* best_continuing_path = NULL;
-	int best_find_N = -1;
 	// end N vs alpha work
 
 	for (int i = 0; i < remain_count; i++) {
@@ -1056,9 +1082,12 @@ double recursive_search(double best, double current, double inc_eng, scatter* or
 		// with the current uncertanty to check if we are worse than the best
 		// solution so far.
 		double combined_error = add_quadrature(step_error, current);
+		if (TREE_DEBUG) {
+			printf("\tstep error: %lf, \tcombined error: %lf\n", step_error, combined_error);
+		}
 
 
-		if (step_error < best) {
+		if (combined_error < best) {
 			// time to go one layer further
 			scatter** new_array = build_array_no_i(remaining, remain_count, i);
 			continuing_path = NULL;
@@ -1072,18 +1101,11 @@ double recursive_search(double best, double current, double inc_eng, scatter* or
 				}
 
 				// begin N vs alpha work
-				scatter_truth* current_truth = remaining[i]->truth;
-				if (current_truth != NULL) {
-					best_find_N = current_truth->true_n;
-					if (best_continuing_path != NULL) {
-						fmap(best_continuing_path, free_null);
-						delete_list(best_continuing_path);
-					}
-					best_continuing_path = continuing_path;
-				} else {
-					fmap(continuing_path, free_null);
-					delete_list(continuing_path);
+				if (best_continuing_path != NULL) {
+					fmap(best_continuing_path, free_null);
+					delete_list(best_continuing_path);
 				}
+				best_continuing_path = continuing_path;
 			} else {
 				fmap(continuing_path, free_null);
 				delete_list(continuing_path);
@@ -1093,9 +1115,18 @@ double recursive_search(double best, double current, double inc_eng, scatter* or
 
 	}
 	free(in);
-	int* best_N_return = (int*)malloc(sizeof(int));
-	best_N_return[0] = best_find_N;
-	path[0] = add_to_top(best_continuing_path, best_N_return);
+	// if (TREE_DEBUG) {
+	// 	printf("recursive_search: best next found N = %i\n",best_find_N);
+	// }
+	if (path != NULL) {
+		int* best_N_return = (int*)malloc(sizeof(int));
+		if (loc->truth != NULL) {
+			best_N_return[0] = loc->truth->true_n;
+		} else {
+			best_N_return[0] = -1;
+		}
+		path[0] = add_to_top(best_continuing_path, best_N_return);
+	}
 	return better_find;
 }
 
@@ -1128,6 +1159,13 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 	scatter** scatters_near = (scatter**)malloc(len_hist_near * sizeof(scatter*));
 	for (int i = 0; i < len_hist_near; i++)	{
 		scatters_near[i] = (scatter*)hist_near_bottom->data;
+		if (TREE_DEBUG) {
+			printf("mgsi: near scatter %i, N = ", i);
+			if (scatters_near[i]->truth != NULL) {
+				printf("%i, ", scatters_near[i]->truth->true_n);
+				printf("deposit = %lf keV\n", scatters_near[i]->deposit);
+			}
+			}
 		hist_near_bottom = hist_near_bottom->up;
 	}
 
@@ -1144,12 +1182,18 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 	scatter** scatters_near_short = (scatter**)malloc(LARGEST * sizeof(scatter*));
 	scatter** scatters_far_short = (scatter**)malloc(LARGEST * sizeof(scatter*));
 	for (int i = 0; i < LARGEST; i++) {
-		if (i > len_hist_near) {
+		if (i >= len_hist_near) {
 			scatters_near_short[i] = NULL;
 		} else {
 			scatters_near_short[i] = scatters_near[i];
+			if (TREE_DEBUG) {
+				printf("mgsi: near scatter short %i, N = ", i);
+				if (scatters_near[i]->truth != NULL) {
+					printf("%i\n", scatters_near[i]->truth->true_n);
+				}
+			}
 		}
-		if (i > len_hist_far) {
+		if (i >= len_hist_far) {
 			scatters_far_short[i] = NULL;
 		} else {
 			scatters_far_short[i] = scatters_far[i];
@@ -1193,7 +1237,9 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 
 	// move the path into the array of N vs alpha, beta, etc.
 	llist* current_location = best_found_path;
-	if (best_find_array != NULL) {
+	if (best_scatter == NULL) {
+
+	} else if (best_find_array != NULL) {
 		for (int i = 0; i < FIRST_N; i++) {
 			if (current_location != NULL) {
 				best_find_array[i] = ((int*)current_location->data)[0];
@@ -1945,10 +1991,14 @@ int main(int argc, char **argv) {
 
 	double in_patient_distance = strtod(argv[4], NULL);
 	double detector_height = strtod(argv[5], NULL);
+	int run_in_patient = 0;
 	energy_cutoff = strtod(argv[6], NULL);
-	if ((in_patient_distance <= 0) || (detector_height <= 0) || (energy_cutoff <= 0)) {
+	if ((in_patient_distance <= 0) || (energy_cutoff <= 0)) {
 		printf("Size and energy dimensions must be greater than zero\n");
 		return 1;
+	}
+	if (detector_height > 0) {
+		run_in_patient = 1;
 	}
 	if (!test_expected_energy()) {
 		fprintf(stderr, "tests failed, exiting\n");
@@ -2010,7 +2060,7 @@ int main(int argc, char **argv) {
 			}
 		}
 		// fmap(history, print_event);
-		if (in_patient_occurance) {
+		if (in_patient_occurance && run_in_patient) {
 			fprintf(out_in_patient, "%i, 1, ", ((event*)(history->data))->number);
 		} else {
 			fprintf(out_in_patient, "%i, 0, ", ((event*)history->data)->number);
@@ -2035,13 +2085,7 @@ int main(int argc, char **argv) {
 			if (endpoints == NULL) {
 				fprintf(out_in_patient, "%f, ", -1.); // trans miss
 				fprintf(out_in_patient, "%f, ", -1.); // longi miss
-				for (int i = 0; i < FIRST_N; i++) {
-					fprintf(out_in_patient, "%i, ", -1);
-				} // alpha, beta ... of scatter set 1
-				for (int i = 0; i < FIRST_N; i++) {
-					fprintf(out_in_patient, "%i, ", alpha_n_2[i]);
-				} // alpha, beta ... of scatter set 2
-				fprintf(out_in_patient, " 0\n"); // ending character
+
 
 			} else {
 				// create the LOR
@@ -2052,26 +2096,33 @@ int main(int argc, char **argv) {
 
 				// now we need to find the distance by which the endpoints miss
 				vec3d* annh_loc = find_annihilation_point(history);
+				if ((annh_loc == NULL) && (detector_height == -1.0)) {
+					annh_loc = three_vec(0.0, 0.0, 0.0);
+				}
 				double miss_dist_trans = first_scat_miss_transverse(result, annh_loc);
 				double miss_dist_long = first_scat_miss_longitudinal(result, annh_loc);
-
+				free(annh_loc);
 
 
 				fprintf(out_in_patient, "%f, ", miss_dist_trans);
 				fprintf(out_in_patient, "%f, ", miss_dist_long);
-				for (int i = 0; i < FIRST_N; i++) {
-					fprintf(out_in_patient, "%i, ", alpha_n_1[i]);
-				}
-				for (int i = 0; i < FIRST_N; i++) {
-					fprintf(out_in_patient, "%i, ", alpha_n_2[i]);
-				}
-				fprintf(out_in_patient, " 0\n"); // acts as a terminating character
+
 				// to make above code simpler
 				// vec_print(endpoints[0]->loc, out_in_patient);
 				// vec_print(endpoints[1]->loc, out_in_patient);				
 				free_lor(result);
 
 			}
+			for (int i = 0; i < FIRST_N; i++) {
+					fprintf(out_in_patient, "%i, ", alpha_n_1[i]);
+					alpha_n_1[i] = -1;
+			} // alpha, beta ... of scatter set 1
+			for (int i = 0; i < FIRST_N; i++) {
+					fprintf(out_in_patient, "%i, ", alpha_n_2[i]);
+					alpha_n_2[i] = -1;
+			} // alpha, beta ... of scatter set 2
+			fprintf(out_in_patient, " 0\n"); // ending character
+
 			if (endpoints != NULL) {
 				delete_scatter(endpoints[0]);
 				delete_scatter(endpoints[1]);
@@ -2083,9 +2134,11 @@ int main(int argc, char **argv) {
 			fprintf(out_in_patient, "%f, ", -1.); // longi miss
 			for (int i = 0; i < FIRST_N; i++) {
 				fprintf(out_in_patient, "%i, ", -1);
+				alpha_n_1[i] = -1;
 			} // alpha, beta ... of scatter set 1
 			for (int i = 0; i < FIRST_N; i++) {
-				fprintf(out_in_patient, "%i, ", alpha_n_2[i]);
+				fprintf(out_in_patient, "%i, ", -1);
+				alpha_n_2[i] = -1;
 			} // alpha, beta ... of scatter set 2
 			fprintf(out_in_patient, " 0\n"); // ending character
 		}
