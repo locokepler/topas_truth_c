@@ -1101,12 +1101,12 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 	scatter** scatters_near_short = (scatter**)malloc(LARGEST * sizeof(scatter*));
 	scatter** scatters_far_short = (scatter**)malloc(LARGEST * sizeof(scatter*));
 	for (int i = 0; i < LARGEST; i++) {
-		if (i > len_hist_near) {
+		if (i >= len_hist_near) {
 			scatters_near_short[i] = NULL;
 		} else {
 			scatters_near_short[i] = scatters_near[i];
 		}
-		if (i > len_hist_far) {
+		if (i >= len_hist_far) {
 			scatters_far_short[i] = NULL;
 		} else {
 			scatters_far_short[i] = scatters_far[i];
