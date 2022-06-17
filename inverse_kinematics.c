@@ -13,6 +13,7 @@
 #define SPD_LGHT 29.98
 #define FIRST_N 5
 #define LARGEST 10
+#define SKIP 0
 
 #define DEP_UNCERT 5.
 #define SPC_UNCERT 1.
@@ -23,6 +24,10 @@
 
 int alpha_n_1[FIRST_N];
 int alpha_n_2[FIRST_N];
+float alpha_eng_distro_n_1[FIRST_N];
+float alpha_eng_distro_n_2[FIRST_N];
+float n_eng_distro_n_1[FIRST_N];
+float n_eng_distro_n_2[FIRST_N];
 
   
 // reads a line from the source file as an event
@@ -1000,7 +1005,7 @@ scatter** build_array_no_i(scatter** source, uint source_len, uint i) {
 }
 
 double recursive_search(double best, double current, double inc_eng, scatter* origin, scatter* loc, scatter** remaining, uint remain_count, llist** path) {
-	if ((loc == NULL) || (remaining == NULL) || (origin == NULL) ||(remain_count == 0)) {
+	if ((loc == NULL) || (remaining == NULL) || (origin == NULL) || (remain_count <= SKIP)) {
 		if (TREE_DEBUG) {
 			printf("recursive_search: end of branch\n");
 		}
@@ -1119,11 +1124,13 @@ double recursive_search(double best, double current, double inc_eng, scatter* or
 	// 	printf("recursive_search: best next found N = %i\n",best_find_N);
 	// }
 	if (path != NULL) {
-		int* best_N_return = (int*)malloc(sizeof(int));
+		float* best_N_return = (float*)malloc(sizeof(float) * 2);
 		if (loc->truth != NULL) {
 			best_N_return[0] = loc->truth->true_n;
+			best_N_return[1] = loc->deposit;
 		} else {
 			best_N_return[0] = -1;
+			best_N_return[1] = -1;
 		}
 		path[0] = add_to_top(best_continuing_path, best_N_return);
 	}
@@ -1131,7 +1138,7 @@ double recursive_search(double best, double current, double inc_eng, scatter* or
 }
 
 
-scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, double sigma_per_scatter, int* best_find_array) {
+scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, double sigma_per_scatter, int* best_find_array, float* alpha_eng_distro) {
 	if ((history_near == NULL) || (history_far == NULL)) {
 		return NULL;
 	}
@@ -1144,7 +1151,6 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 	int len_hist_near = list_length(history_near);
 	int len_hist_far = list_length(history_far);
 
-	double best_find = sigma_per_scatter * len_hist_near;
 
 	if (len_hist_near < 2) {
 		// history1 is too short to run the recursion process.
@@ -1179,9 +1185,9 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 	scatter_quicksort(scatters_near, 0, len_hist_near - 1);
 	scatter_quicksort(scatters_far, 0, len_hist_far - 1);
 	// sorts the scatters by deposit energy, now only keep the largest LARGEST
-	scatter** scatters_near_short = (scatter**)malloc(LARGEST * sizeof(scatter*));
-	scatter** scatters_far_short = (scatter**)malloc(LARGEST * sizeof(scatter*));
-	for (int i = 0; i < LARGEST; i++) {
+	scatter** scatters_near_short = (scatter**)malloc((LARGEST + SKIP) * sizeof(scatter*));
+	scatter** scatters_far_short = (scatter**)malloc((LARGEST + SKIP) * sizeof(scatter*));
+	for (int i = 0; i < LARGEST + SKIP; i++) {
 		if (i >= len_hist_near) {
 			scatters_near_short[i] = NULL;
 		} else {
@@ -1199,12 +1205,13 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 			scatters_far_short[i] = scatters_far[i];
 		}
 	}
-	if (len_hist_near > LARGEST) {
-		len_hist_near = LARGEST;
+	if (len_hist_near > LARGEST + SKIP) {
+		len_hist_near = LARGEST + SKIP;
 	}
-	if (len_hist_far > LARGEST) {
-		len_hist_far = LARGEST;
+	if (len_hist_far > LARGEST + SKIP) {
+		len_hist_far = LARGEST + SKIP;
 	}
+	double best_find = sigma_per_scatter * (len_hist_near - SKIP);
 
 
 
@@ -1242,10 +1249,12 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 	} else if (best_find_array != NULL) {
 		for (int i = 0; i < FIRST_N; i++) {
 			if (current_location != NULL) {
-				best_find_array[i] = ((int*)current_location->data)[0];
+				best_find_array[i] = (int)(((float*)(current_location->data))[0]);
+				alpha_eng_distro[i] = ((float*)current_location->data)[1];
 				current_location = current_location->down;
 			} else {
 				best_find_array[i] = -1;
+				alpha_eng_distro[i] = -1;
 			}
 		}
 	}
@@ -1764,11 +1773,27 @@ scatter** find_endpoints_stat(llist* detector_history, double sigma_per_scatter)
 		alpha_n_1[i] = -1;
 		alpha_n_2[i] = -1;
 	}
+	llist* current_loc1 = list_tail(scat_list1);
+	llist* current_loc2 = list_tail(scat_list2);
+	for (int i = 0; i < FIRST_N; i++) {
+		if ((current_loc1 != NULL) && (current_loc1->data != NULL)) {
+			n_eng_distro_n_1[i] = ((scatter*)(current_loc1->data))->deposit;
+			current_loc1 = current_loc1->up;
+		} else {
+			n_eng_distro_n_1[i] = -1;
+		}
+		if ((current_loc2 != NULL) && (current_loc2->data != NULL)) {
+			n_eng_distro_n_2[i] = ((scatter*)(current_loc2->data))->deposit;
+			current_loc2 = current_loc2->up;
+		} else {
+			n_eng_distro_n_2[i] = -1;
+		}
+	}
 
 	// run the actual finding of endpoint 1
-	scatter* endpoint1 = multi_gamma_stat_iteration(scat_list1, scat_list2, sigma_per_scatter, alpha_n_1);
+	scatter* endpoint1 = multi_gamma_stat_iteration(scat_list1, scat_list2, sigma_per_scatter, alpha_n_1, alpha_eng_distro_n_1);
 	// now do the same with endpoint 2
-	scatter* endpoint2 = multi_gamma_stat_iteration(scat_list2, scat_list1, sigma_per_scatter, alpha_n_2);
+	scatter* endpoint2 = multi_gamma_stat_iteration(scat_list2, scat_list1, sigma_per_scatter, alpha_n_2, alpha_eng_distro_n_2);
 
 
 	if ((endpoint1 == NULL) || (endpoint2 == NULL)) {
@@ -1978,13 +2003,20 @@ int main(int argc, char **argv) {
 	}
 	char* debug_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
 	char* lor_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
+	char* eng_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
+
 	strcpy(debug_file, argv[3]);
 	strcpy(lor_file, argv[3]);
+	strcpy(eng_file, argv[3]);
+
 	debug_file = strcat(debug_file, ".debug");
 	lor_file = strcat(lor_file, ".lor");
+	eng_file = strcat(eng_file, ".eng");
+
 	FILE* out_in_patient = fopen(debug_file, "w");
 	FILE* lor_output = fopen(lor_file, "w");
-	if ((out_in_patient == NULL) || (lor_output == NULL)) {
+	FILE* eng_output = fopen(eng_file, "w");
+	if ((out_in_patient == NULL) || (lor_output == NULL) || (eng_output == NULL)) {
 		printf("Unable to open output file for writing\n");
 		return 1;
 	}
@@ -2114,14 +2146,32 @@ int main(int argc, char **argv) {
 
 			}
 			for (int i = 0; i < FIRST_N; i++) {
-					fprintf(out_in_patient, "%i, ", alpha_n_1[i]);
-					alpha_n_1[i] = -1;
+				fprintf(out_in_patient, "%i, ", alpha_n_1[i]);
+				alpha_n_1[i] = -1;
 			} // alpha, beta ... of scatter set 1
 			for (int i = 0; i < FIRST_N; i++) {
-					fprintf(out_in_patient, "%i, ", alpha_n_2[i]);
-					alpha_n_2[i] = -1;
+				fprintf(out_in_patient, "%i, ", alpha_n_2[i]);
+				alpha_n_2[i] = -1;
 			} // alpha, beta ... of scatter set 2
 			fprintf(out_in_patient, " 0\n"); // ending character
+
+			for (int i = 0; i < FIRST_N; i++) {
+				fprintf(eng_output, "%f, ", alpha_eng_distro_n_1[i]);
+				alpha_eng_distro_n_1[i] = -1;
+			} // alpha, beta ... of scatter set 1
+			for (int i = 0; i < FIRST_N; i++) {
+				fprintf(eng_output, "%f, ", alpha_eng_distro_n_2[i]);
+				alpha_eng_distro_n_2[i] = -1;
+			} // alpha, beta ... of scatter set 2
+			for (int i = 0; i < FIRST_N; i++) {
+				fprintf(eng_output, "%f, ", n_eng_distro_n_1[i]);
+				n_eng_distro_n_1[i] = -1;
+			} // alpha, beta ... of scatter set 1
+			for (int i = 0; i < FIRST_N; i++) {
+				fprintf(eng_output, "%f, ", n_eng_distro_n_2[i]);
+				n_eng_distro_n_2[i] = -1;
+			} // alpha, beta ... of scatter set 2
+			fprintf(eng_output, " 0\n"); // ending character
 
 			if (endpoints != NULL) {
 				delete_scatter(endpoints[0]);
