@@ -8,13 +8,16 @@
 #include "lor.h"
 #include <pthread.h>
 
-#define MAX_THREAD_CALLS 4
+#define MAX_THREAD_CALLS 8
 
-#define ENG_RNG 0.001
+#define ENG_RNG 0.001f
 #define COMP_INT 1667457891
-#define ELECTRON_MASS 510.999
-#define SPD_LGHT 29.98
+#define ELECTRON_MASS 510.999f
+#define SPD_LGHT 29.98f
 #define LARGEST 10
+
+#define DEP_UNCERT 5.f
+#define SPC_UNCERT 0.5f
 
 
 #define READ_DEBUG 0
@@ -99,11 +102,25 @@ scatter* new_scatter(vec3d* vector, vec3d* dir, double deposit, double time, dou
 	new->dir = dir;
 	new->time = time;
 	new->time_uncert = time_uncert;
+	new->truth = NULL;
 	return new;
 }
 
 scatter* copy_scatter(scatter* a) {
 	return new_scatter(vec_copy(a->loc),vec_copy(a->dir), a->deposit, a->time, a->eng_uncert, a->space_uncert, a->time_uncert);
+}
+
+void* delete_scatter(void* in) {
+	if (in == NULL) {
+		return NULL;
+	}
+	free(((scatter*)in)->loc);
+	free(((scatter*)in)->dir);
+	if (((scatter*)in)->truth != NULL) {
+		free(((scatter*)in)->truth);
+	}
+	free(in);
+	return NULL;
 }
 
 event* duplicate_event(event* source) {
@@ -119,16 +136,7 @@ event* duplicate_event(event* source) {
 	return new_event;
 }
 
-// frees scatter malloc
-void* delete_scatter(void* in) {
-	if (in == NULL) {
-		return NULL;
-	}
-	free(((scatter*)in)->loc);
-	free(((scatter*)in)->dir);
-	free(in);
-	return NULL;
-}
+
 
 // frees event malloc, returns NULL. For fmap
 void* delete_event(void* in) {
@@ -434,6 +442,32 @@ double line_to_dot_dist(vec3d* start, vec3d* end, vec3d* point) {
 // does what it says on the tin. Adds a and b in quadrature
 double add_quadrature(double a, double b) {
 	return sqrt((a * a) + (b * b));
+}
+
+// using the partial derviative in b and theta computes the uncertanty in the
+// energy of the gamma going to b
+double expected_uncert_b(double b, double theta, double uncert_b, double uncert_theta) {
+	// if given bullshit uncertanties, say it
+	if ((uncert_b < 0) || (uncert_theta < 0)) {
+		return -1.;
+	}
+
+	// first partial derivative in theta
+	double numerator = 511. * b * sin(theta);
+	double one_less_theta = 1. - cos(theta);
+	double root = b * b + ((4. * 511. * b) / one_less_theta);
+	double denom = one_less_theta * one_less_theta * sqrt(root);
+	double theta_der = numerator / denom;
+	uncert_theta = uncert_theta * theta_der;
+
+	// now partial derivative in b
+	numerator = b + ((2. * 511.) / one_less_theta);
+	root = b * b + ((4. * 511. * b) / one_less_theta);
+	double first_term = numerator / sqrt(root);
+	double b_der = .5 * (first_term = 1.);
+	uncert_b = uncert_b * b_der;
+
+	return add_quadrature(uncert_theta, uncert_b);
 }
 
 /* 
@@ -1013,7 +1047,9 @@ double recursive_search(double best, double current, double inc_eng, scatter* or
 			free(new_array);
 			if (below < better_find) {
 				better_find = below;
-
+				if (below < best) {
+					best = below;
+				}
 			}
 		}
 	}
@@ -1065,12 +1101,12 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 	scatter** scatters_near_short = (scatter**)malloc(LARGEST * sizeof(scatter*));
 	scatter** scatters_far_short = (scatter**)malloc(LARGEST * sizeof(scatter*));
 	for (int i = 0; i < LARGEST; i++) {
-		if (i > len_hist_near) {
+		if (i >= len_hist_near) {
 			scatters_near_short[i] = NULL;
 		} else {
 			scatters_near_short[i] = scatters_near[i];
 		}
-		if (i > len_hist_far) {
+		if (i >= len_hist_far) {
 			scatters_far_short[i] = NULL;
 		} else {
 			scatters_far_short[i] = scatters_far[i];
@@ -1096,6 +1132,7 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 
 			if (try < best_find) {
 				best_scatter = scatters_near[j];
+				best_find = try;
 			}
 		}
 		free(new_array);
@@ -1103,6 +1140,8 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 
 	free(scatters_near);
 	free(scatters_far);
+	free(scatters_near_short);
+	free(scatters_far_short);
 
 
 	return best_scatter;
@@ -1154,7 +1193,7 @@ llist* build_scatters(llist* detector_history, int id) {
 		return NULL;
 	}
 	// looks to find the first instance of each electron showing up. Using the
-	// location of that electron it checks to see if it lines up with a scatter
+	// location of that eele_dirith a scatter
 	// of a gamma with the same identifier as id. If all is good the location is
 	// added as a scatter with the electron's energy.
 
@@ -1217,11 +1256,17 @@ llist* build_scatters(llist* detector_history, int id) {
 						} else {
 							ele_dir = NULL;
 						}
+						scatter* add_scatter;
 						if (ele_dir == NULL) {
-							scatter_list = add_to_bottom(scatter_list, new_scatter_old(scatter_loc, ((event*)detector_history->data)->energy, ((event*)detector_history->data)->tof));
+							
+							add_scatter = new_scatter(scatter_loc, NULL, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, -1);
 						} else {
-							scatter_list = add_to_bottom(scatter_list, new_scatter(scatter_loc, ele_dir, cur_event->energy, ((event*)detector_history->data)->tof, -1, -1, -1));
+							// normalize the electron direction
+							vec3d* ele_dir_norm = vec_norm(ele_dir);
+							free(ele_dir);
+							add_scatter = new_scatter(scatter_loc, ele_dir_norm, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, -1);
 						}
+						scatter_list = add_to_bottom(scatter_list, add_scatter);
 					}
 					// add the electron to the list of electrons we have checked
 					int* electron_id = (int*)malloc(sizeof(int));
@@ -1235,6 +1280,19 @@ llist* build_scatters(llist* detector_history, int id) {
 
 	fmap(checked_electrons, free_null);
 	delete_list(checked_electrons);
+
+	// go through and add the real n value for each scatter
+	// the list will be in reverse order due to TOPAS/Geant4 call structure
+	int length = list_length(scatter_list);
+	llist* head = scatter_list;
+	for (int i = 0; i < length; i++) {
+		scatter_truth* true_info = ((scatter*)(head->data))->truth;
+		if (true_info != NULL) {
+			true_info->true_n = length - i;
+		}
+		head = head->down;
+	}
+
 	return scatter_list;
 }
 
@@ -1713,10 +1771,10 @@ lor* create_lor(scatter* a, scatter* b) {
 		b_space = 0.1;
 	}
 	if (a_time < 0) {
-		a_time = 30.;
+		a_time = 5.;
 	}
 	if (b_time < 0) {
-		b_time = 30.;
+		b_time = 5.;
 	}
 
 	new->transverse_uncert = sqrt(a_space * a_space + b_space * b_space);
@@ -1765,9 +1823,10 @@ void* wrapper_inv_kin_stat(void* a) {
 		delete_scatter(endpoints[1]);
 		free(endpoints);
 
-		fmap(history, delete_event);
-		delete_list(history);
 	}
+	fmap(history, delete_event);
+	delete_list(history);
+	free(source);
 	return 0;
 }
 
@@ -1796,7 +1855,7 @@ int main(int argc, char **argv) {
 		printf("Unable to open detector history file\n");
 		return 1;
 	}
-	char* lor_file = (char*)malloc(sizeof(char) * strlen(argv[2] + 10));
+	char* lor_file = (char*)malloc(sizeof(char) * (strlen(argv[2]) + 10));
 	strcpy(lor_file, argv[2]);
 	lor_file = strcat(lor_file, ".lor");
 	FILE* lor_output = fopen(lor_file, "w");
@@ -1836,23 +1895,44 @@ int main(int argc, char **argv) {
 		if ((run_num / 10000) * 10000 == run_num) {
 			printf("run number: %u\n", run_num);
 		}
-		if (tid[cur_thread] != -1) {
-			pthread_join(tid[cur_thread], NULL);
-			tid[cur_thread] = -1;
-		}
+		// if (tid[cur_thread] != -1) {
+		// 	pthread_join(tid[cur_thread], NULL);
+		// 	tid[cur_thread] = -1;
+		// }
 
 		// lets make this multithreaded
-		struct _source_union *arguments = (struct _source_union *)malloc(sizeof(struct _source_union));
-		arguments->history = in_det_hist;
-		arguments->cutoff = energy_cutoff;
-		arguments->output = lor_output;
-		pthread_create(&tid[cur_thread], NULL, wrapper_inv_kin_stat, arguments);
+		// struct _source_union *arguments = (struct _source_union *)malloc(sizeof(struct _source_union));
+		// arguments->history = in_det_hist;
+		// arguments->cutoff = energy_cutoff;
+		// arguments->output = lor_output;
+		// pthread_create(&tid[cur_thread], NULL, wrapper_inv_kin_stat, arguments);
 
+		scatter** endpoints = find_endpoints_stat(in_det_hist, energy_cutoff);
 
+		if (endpoints == NULL) {
+
+		} else {
+			// create the LOR
+			lor* result = create_lor(endpoints[0], endpoints[1]);
+			fprintf(lor_output, "%i, ", ((event*)(in_det_hist->data))->number);
+			print_lor(lor_output, result);
+			fprintf(lor_output, "\n");
+		}
+		if (endpoints != NULL) {
+			delete_scatter(endpoints[0]);
+			delete_scatter(endpoints[1]);
+			free(endpoints);
+		}
+		fmap(in_det_hist, delete_event);
+		delete_list(in_det_hist);
 		in_det_hist = load_historyb(in_det_histories, read_line);
 		run_num++;
 
-
+		// if (cur_thread + 1 < MAX_THREAD_CALLS) {
+		// 	cur_thread++;
+		// } else {
+		// 	cur_thread = 0;
+		// }
 		// scatter** endpoints = find_endpoints_ele_dir(in_det_hist, energy_cutoff);
 		// scatter** endpoints = find_endpoints_stat(in_det_hist, energy_cutoff);
 
