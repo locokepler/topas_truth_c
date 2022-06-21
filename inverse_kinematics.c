@@ -191,7 +191,7 @@ llist* load_history(FILE* source, event* (*f)(FILE*)) {
 	uint history_num;
 	llist* history = NULL;
 	if (previous_event == NULL) {
-		history_num = 0;
+		// history_num = 0;
 		previous_event = f(source);
 		if (previous_event == NULL) {
 			// probably at EOF, in any case we need to be done
@@ -200,9 +200,8 @@ llist* load_history(FILE* source, event* (*f)(FILE*)) {
 			}
 			return NULL;
 		}
-	} else {
-		history_num = previous_event->number;
 	}
+	history_num = previous_event->number;
 	while (history_num == previous_event->number) {
 		history = add_to_bottom(history, previous_event);
 		previous_event = f(source);
