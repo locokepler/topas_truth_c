@@ -10,14 +10,18 @@
 
 #define MAX_THREAD_CALLS 8
 
-#define ENG_RNG 0.001f
+#define ENG_RNG 0.001
 #define COMP_INT 1667457891
-#define ELECTRON_MASS 510.999f
-#define SPD_LGHT 29.98f
+#define ELECTRON_MASS 510.999
+#define SPD_LGHT 29.98
+#define PI 3.1415
+#define FIRST_N 5
 #define LARGEST 10
+#define SKIP 0
 
-#define DEP_UNCERT 5.f
-#define SPC_UNCERT 0.5f
+#define TIME_UNCERT_CM 5.
+#define SPC_UNCERT 0.5
+#define UNCERT_REP 12
 
 
 #define READ_DEBUG 0
@@ -1258,13 +1262,47 @@ llist* build_scatters(llist* detector_history, int id) {
 						scatter* add_scatter;
 						if (ele_dir == NULL) {
 							
-							add_scatter = new_scatter(scatter_loc, NULL, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, -1);
+							add_scatter = new_scatter(scatter_loc, NULL, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, TIME_UNCERT_CM);
 						} else {
 							// normalize the electron direction
 							vec3d* ele_dir_norm = vec_norm(ele_dir);
 							free(ele_dir);
-							add_scatter = new_scatter(scatter_loc, ele_dir_norm, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, -1);
+							add_scatter = new_scatter(scatter_loc, ele_dir_norm, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, TIME_UNCERT_CM);
 						}
+						scatter_truth* truth_info = (scatter_truth*)malloc(sizeof(scatter_truth));
+						truth_info->true_eng = cur_event->energy;
+						truth_info->true_time = cur_event->tof;
+						add_scatter->truth = truth_info;
+
+						// add random variation to the scatter location and time
+						double dist_var = 0.0;
+						double time_var = 0.0;
+						for (int i = 0; i < UNCERT_REP; i++) {
+							// creates a randomly distributed 
+							dist_var += drand48();
+							time_var += drand48();
+						}
+						dist_var -= UNCERT_REP / 2;
+						time_var -= UNCERT_REP / 2;
+						dist_var *= SPC_UNCERT;
+						time_var *= TIME_UNCERT_CM / SPD_LGHT;
+						// distance and time now have their variation size
+						double dist_theta = PI * drand48();
+						double dist_phi = 2 * PI * drand48();
+						// distance variation direction
+						double dist_x = dist_var * cos(dist_phi) * sin(dist_theta);
+						double dist_y = dist_var * sin(dist_phi) * cos(dist_theta);
+						double dist_z = dist_var * cos(dist_theta);
+						vec3d* dist_random = three_vec(dist_x, dist_y, dist_z);
+						vec3d* rand_loc = vec_add(add_scatter->loc, dist_random);
+						free(dist_random);
+						free(add_scatter->loc);
+						add_scatter->loc = rand_loc;
+						// distance variation set
+						add_scatter->time += time_var;
+						// done adding random variation
+
+
 						scatter_list = add_to_bottom(scatter_list, add_scatter);
 					}
 					// add the electron to the list of electrons we have checked
@@ -1294,6 +1332,7 @@ llist* build_scatters(llist* detector_history, int id) {
 
 	return scatter_list;
 }
+
 
 // we now have the infirsturcture for finding what scatter associated with a
 // gamma is the first. Now we need to run this twice (once on each annihilation
