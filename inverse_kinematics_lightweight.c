@@ -8,7 +8,7 @@
 #include "lor.h"
 #include <pthread.h>
 
-#define MAX_THREAD_CALLS 8
+// #define MAX_THREAD_CALLS 8
 
 #define ENG_RNG 0.001
 #define COMP_INT 1667457891
@@ -18,17 +18,18 @@
 #define FIRST_N 5
 #define LARGEST 10
 #define SKIP 0
+#define KEEP_SINGLES 1
 
-#define TIME_UNCERT_CM 5.
-#define SPC_UNCERT 0.5
+#define TIME_UNCERT_CM 1.
+#define SPC_UNCERT 0.1
 #define UNCERT_REP 12
 
 
 #define READ_DEBUG 0
 #define GENERAL_DEBUG 0
 
-pthread_t tid[MAX_THREAD_CALLS];
-pthread_mutex_t file_lock;
+// pthread_t tid[MAX_THREAD_CALLS];
+// pthread_mutex_t file_lock;
 
   
 // reads a line from the source file as an event
@@ -972,7 +973,7 @@ scatter* multi_gamma_ele_iterator(llist* history1, llist* history2, double energ
  * array without the element that was at location i in the source array.
  */
 scatter** build_array_no_i(scatter** source, uint source_len, uint i) {
-	if (source == NULL) {
+	if ((source == NULL) || (source_len <= 1)) {
 		return NULL;
 	}
 	scatter** result = (scatter**)malloc(sizeof(scatter*) * (source_len - 1));
@@ -1077,6 +1078,10 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 
 	if (len_hist_near < 2) {
 		// history1 is too short to run the recursion process.
+		if (KEEP_SINGLES && len_hist_near == 1) {
+			// we have a single case
+			return history_near->data;
+		}
 		return NULL;
 	}
 	if (len_hist_far < 1) {
@@ -1278,14 +1283,14 @@ llist* build_scatters(llist* detector_history, int id) {
 						double dist_var = 0.0;
 						double time_var = 0.0;
 						for (int i = 0; i < UNCERT_REP; i++) {
-							// creates a randomly distributed 
+							// creates a randomly distributed value
 							dist_var += drand48();
 							time_var += drand48();
 						}
-						dist_var -= UNCERT_REP / 2;
-						time_var -= UNCERT_REP / 2;
+						dist_var -= ((float)(UNCERT_REP) / 2.0);
+						time_var -= ((float)(UNCERT_REP) / 2.0);
 						dist_var *= SPC_UNCERT;
-						time_var *= TIME_UNCERT_CM / SPD_LGHT;
+						time_var *= (TIME_UNCERT_CM / SPD_LGHT);
 						// distance and time now have their variation size
 						double dist_theta = PI * drand48();
 						double dist_phi = 2 * PI * drand48();
@@ -1296,6 +1301,7 @@ llist* build_scatters(llist* detector_history, int id) {
 						vec3d* dist_random = three_vec(dist_x, dist_y, dist_z);
 						vec3d* rand_loc = vec_add(add_scatter->loc, dist_random);
 						free(dist_random);
+						// free(rand_loc);
 						free(add_scatter->loc);
 						add_scatter->loc = rand_loc;
 						// distance variation set
@@ -1839,34 +1845,34 @@ struct _source_union {
 
 // a wrapper of the statistical inverse kinematics algoritem that allows for
 // multithreading. Locks the sending to fprintf.
-void* wrapper_inv_kin_stat(void* a) {
-	struct _source_union *source = (struct _source_union *)a;
-	llist* history = source->history;
-	FILE* lor_output = source->output;
-	scatter** endpoints = find_endpoints_stat(history, source->cutoff);
+// void* wrapper_inv_kin_stat(void* a) {
+// 	struct _source_union *source = (struct _source_union *)a;
+// 	llist* history = source->history;
+// 	FILE* lor_output = source->output;
+// 	scatter** endpoints = find_endpoints_stat(history, source->cutoff);
 
-	if (endpoints == NULL) {
+// 	if (endpoints == NULL) {
 
-	} else {
-		lor* result = create_lor(endpoints[0], endpoints[1]);
-		pthread_mutex_lock(&file_lock);
-		fprintf(lor_output, "%i, ", ((event*)(history->data))->number);
-		print_lor(lor_output, result);
-		fprintf(lor_output, "\n");
-		pthread_mutex_unlock(&file_lock);
+// 	} else {
+// 		lor* result = create_lor(endpoints[0], endpoints[1]);
+// 		pthread_mutex_lock(&file_lock);
+// 		fprintf(lor_output, "%i, ", ((event*)(history->data))->number);
+// 		print_lor(lor_output, result);
+// 		fprintf(lor_output, "\n");
+// 		pthread_mutex_unlock(&file_lock);
 
-		free_lor(result);
+// 		free_lor(result);
 
-		delete_scatter(endpoints[0]);
-		delete_scatter(endpoints[1]);
-		free(endpoints);
+// 		delete_scatter(endpoints[0]);
+// 		delete_scatter(endpoints[1]);
+// 		free(endpoints);
 
-	}
-	fmap(history, delete_event);
-	delete_list(history);
-	free(source);
-	return 0;
-}
+// 	}
+// 	fmap(history, delete_event);
+// 	delete_list(history);
+// 	free(source);
+// 	return 0;
+// }
 
 
 int main(int argc, char **argv) {
@@ -1915,16 +1921,16 @@ int main(int argc, char **argv) {
 	first_scat_hypot = 0;
 	second_scat_hypot = 0;
 
-	if (pthread_mutex_init(&file_lock, NULL)) {
-		fprintf(stderr, "pthread: unable to make volume lock, exiting.\n");
-		return(1);
-	}
+	// if (pthread_mutex_init(&file_lock, NULL)) {
+	// 	fprintf(stderr, "pthread: unable to make volume lock, exiting.\n");
+	// 	return(1);
+	// }
 
-	for (int i = 0; i < MAX_THREAD_CALLS; i++) {
-		// set the array of threads to be empty
-		tid[i] = -1;
-	}
-	int cur_thread = 0;
+	// for (int i = 0; i < MAX_THREAD_CALLS; i++) {
+	// 	// set the array of threads to be empty
+	// 	tid[i] = -1;
+	// }
+	// int cur_thread = 0;
 
 
 	// begin the primary loop over all histories
