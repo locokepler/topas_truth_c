@@ -44,7 +44,7 @@ event* read_line(FILE* source) {
 	double z;
 	double tof;
 	int particle;
-	char origin[20];
+	// char origin[20];
 	int count;
 
 	int worked;
@@ -57,7 +57,7 @@ event* read_line(FILE* source) {
 	worked = fscanf(source, "%lf", &z);
 	worked = fscanf(source, "%lf", &tof);
 	worked = fscanf(source, "%i", &particle);
-	worked = fscanf(source, "%s", origin);
+	// worked = fscanf(source, "%s", origin);
 	worked = fscanf(source, "%i", &count);
 
 	if (worked == EOF) {
@@ -71,12 +71,67 @@ event* read_line(FILE* source) {
 	}
 	new_event->number 		= numb;
 	new_event->energy 		= energy;
-	new_event->depoisted 	= deposit;
+	new_event->deposited 	= deposit;
 	new_event->location 	= three_vec(x,y,z);
 	new_event->tof 			= tof;
 	new_event->particle 	= particle;
-	strcpy(new_event->orgin, origin);
+	// strcpy(new_event->orgin, origin);
 	new_event->id		= count;
+	new_event->orgin[0]		= (char)0;
+
+
+	// if (READ_DEBUG) {
+	// 	print_event((void*)new_event);
+	// }
+
+	return new_event;
+}
+
+// reads an event from a binary file
+
+event* read_line_binary(FILE* source) {
+
+	// begin to fill the event struct with information from .phsp
+	uint numb;
+	double energy;
+	double deposit;
+	float x;
+	float y;
+	float z;
+	float tof;
+	int particle;
+	int count;
+
+	int worked = 0;
+
+	worked += fread(&numb, sizeof(uint), 1, source);
+	worked += fread(&energy, sizeof(double), 1, source);
+	worked += fread(&deposit, sizeof(double), 1, source);
+	worked += fread(&x, sizeof(float), 1, source);
+	worked += fread(&y, sizeof(float), 1, source);
+	worked += fread(&z, sizeof(float), 1, source);
+	worked += fread(&tof, sizeof(float), 1, source);
+	worked += fread(&particle, sizeof(int), 1, source);
+	worked += fread(&count, sizeof(int), 1, source);
+
+	if (worked != 9) {
+		// something went wrong with the read, don't pass bad information
+		return NULL;
+	}
+	
+	// make a new event to be passed out
+	event* new_event = (event*)malloc(sizeof(event));
+	if (new_event == NULL) {
+		return NULL;
+	}
+	new_event->number 		= numb;
+	new_event->energy 		= energy;
+	new_event->deposited 	= deposit;
+	new_event->location 	= three_vec((double)x,(double)y,(double)z);
+	new_event->tof 			= (double)tof;
+	new_event->particle 	= particle;
+	new_event->id			= count;
+	new_event->orgin[0]		= (char)0;
 
 	// if (READ_DEBUG) {
 	// 	print_event((void*)new_event);
@@ -132,11 +187,11 @@ event* duplicate_event(event* source) {
 	event* new_event = (event*)malloc(sizeof(event));
 	new_event->number		= source->number;
 	new_event->energy		= source->energy;
-	new_event->depoisted	= source->depoisted;
+	new_event->deposited	= source->deposited;
 	new_event->location		= vec_copy(source->location);
 	new_event->tof			= source->tof;
 	new_event->particle		= source->particle;
-	strcpy(new_event->orgin, source->orgin);
+	strncpy(new_event->orgin, source->orgin, ORIGIN_BUFFER);
 	new_event->id			= source->id;
 	return new_event;
 }
@@ -1173,7 +1228,7 @@ int closest_gamma(llist* history, vec3d* target) {
 	while (history != NULL) {
 		// first, define our working event
 		working_event = (event*)history->data;
-		if ((working_event->particle == 22) && (working_event->orgin[0] == 'a')) {
+		if ((working_event->particle == 22)) {
 			// it is a gamma from an annihilation
 			double check_dist = vec_dist(target, working_event->location);
 			if (distance > check_dist) {
@@ -1239,83 +1294,80 @@ llist* build_scatters(llist* detector_history, int id) {
 			// electron_checked now contains if we have previously looked at this
 			// electron
 			if (!electron_checked) {
-				// if we haven't looked at this one yet, so is it compton based
-				if (((event*)detector_history->data)->orgin[0] == 'c') {
-					//  so which gamma is it from?
-					int gamma_id = closest_gamma(detector_history, ((event*)detector_history->data)->location);
-					if (gamma_id == id) {
-						// time to add this electron to the scatter list
-						vec3d* scatter_loc = vec_copy(((event*)detector_history->data)->location);
-						event* cur_event = (event*)detector_history->data;
-						event* next_event;
-						if (detector_history->down != NULL) {
-							next_event = (event*)detector_history->down->data;
-						} else {
-							next_event = NULL;
-						}
-						vec3d* ele_dir = NULL;
-						if ((next_event != NULL) && (cur_event->id == next_event->id)) {
-							ele_dir = vec_sub(next_event->location, ((event*)detector_history->data)->location);
-							if ((fabs(ele_dir->x) < 0.0001) && (fabs(ele_dir->y) < 0.0001) && (fabs(ele_dir->z) < 0.0001)) {
-								// no actual movement of the electron from which to find a path
-								free(ele_dir);
-								ele_dir = NULL;
-							}
-						} else {
+				//  so which gamma is it from?
+				int gamma_id = closest_gamma(detector_history, ((event*)detector_history->data)->location);
+				if (gamma_id == id) {
+					// time to add this electron to the scatter list
+					vec3d* scatter_loc = vec_copy(((event*)detector_history->data)->location);
+					event* cur_event = (event*)detector_history->data;
+					event* next_event;
+					if (detector_history->down != NULL) {
+						next_event = (event*)detector_history->down->data;
+					} else {
+						next_event = NULL;
+					}
+					vec3d* ele_dir = NULL;
+					if ((next_event != NULL) && (cur_event->id == next_event->id)) {
+						ele_dir = vec_sub(next_event->location, ((event*)detector_history->data)->location);
+						if ((fabs(ele_dir->x) < 0.0001) && (fabs(ele_dir->y) < 0.0001) && (fabs(ele_dir->z) < 0.0001)) {
+							// no actual movement of the electron from which to find a path
+							free(ele_dir);
 							ele_dir = NULL;
 						}
-						scatter* add_scatter;
-						if (ele_dir == NULL) {
-							
-							add_scatter = new_scatter(scatter_loc, NULL, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, TIME_UNCERT_CM);
-						} else {
-							// normalize the electron direction
-							vec3d* ele_dir_norm = vec_norm(ele_dir);
-							free(ele_dir);
-							add_scatter = new_scatter(scatter_loc, ele_dir_norm, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, TIME_UNCERT_CM);
-						}
-						scatter_truth* truth_info = (scatter_truth*)malloc(sizeof(scatter_truth));
-						truth_info->true_eng = cur_event->energy;
-						truth_info->true_time = cur_event->tof;
-						add_scatter->truth = truth_info;
-
-						// add random variation to the scatter location and time
-						double dist_var = 0.0;
-						double time_var = 0.0;
-						for (int i = 0; i < UNCERT_REP; i++) {
-							// creates a randomly distributed value
-							dist_var += drand48();
-							time_var += drand48();
-						}
-						dist_var -= ((float)(UNCERT_REP) / 2.0);
-						time_var -= ((float)(UNCERT_REP) / 2.0);
-						dist_var *= SPC_UNCERT;
-						time_var *= (TIME_UNCERT_CM / SPD_LGHT);
-						// distance and time now have their variation size
-						double dist_theta = PI * drand48();
-						double dist_phi = 2 * PI * drand48();
-						// distance variation direction
-						double dist_x = dist_var * cos(dist_phi) * sin(dist_theta);
-						double dist_y = dist_var * sin(dist_phi) * cos(dist_theta);
-						double dist_z = dist_var * cos(dist_theta);
-						vec3d* dist_random = three_vec(dist_x, dist_y, dist_z);
-						vec3d* rand_loc = vec_add(add_scatter->loc, dist_random);
-						free(dist_random);
-						// free(rand_loc);
-						free(add_scatter->loc);
-						add_scatter->loc = rand_loc;
-						// distance variation set
-						add_scatter->time += time_var;
-						// done adding random variation
-
-
-						scatter_list = add_to_bottom(scatter_list, add_scatter);
+					} else {
+						ele_dir = NULL;
 					}
-					// add the electron to the list of electrons we have checked
-					int* electron_id = (int*)malloc(sizeof(int));
-					*electron_id = ((event*)detector_history->data)->id;
-					checked_electrons = add_to_bottom(checked_electrons, electron_id);
+					scatter* add_scatter;
+					if (ele_dir == NULL) {
+						
+						add_scatter = new_scatter(scatter_loc, NULL, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, TIME_UNCERT_CM);
+					} else {
+						// normalize the electron direction
+						vec3d* ele_dir_norm = vec_norm(ele_dir);
+						free(ele_dir);
+						add_scatter = new_scatter(scatter_loc, ele_dir_norm, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, TIME_UNCERT_CM);
+					}
+					scatter_truth* truth_info = (scatter_truth*)malloc(sizeof(scatter_truth));
+					truth_info->true_eng = cur_event->energy;
+					truth_info->true_time = cur_event->tof;
+					add_scatter->truth = truth_info;
+
+					// add random variation to the scatter location and time
+					double dist_var = 0.0;
+					double time_var = 0.0;
+					for (int i = 0; i < UNCERT_REP; i++) {
+						// creates a randomly distributed value
+						dist_var += drand48();
+						time_var += drand48();
+					}
+					dist_var -= ((float)(UNCERT_REP) / 2.0);
+					time_var -= ((float)(UNCERT_REP) / 2.0);
+					dist_var *= SPC_UNCERT;
+					time_var *= (TIME_UNCERT_CM / SPD_LGHT);
+					// distance and time now have their variation size
+					double dist_theta = PI * drand48();
+					double dist_phi = 2 * PI * drand48();
+					// distance variation direction
+					double dist_x = dist_var * cos(dist_phi) * sin(dist_theta);
+					double dist_y = dist_var * sin(dist_phi) * cos(dist_theta);
+					double dist_z = dist_var * cos(dist_theta);
+					vec3d* dist_random = three_vec(dist_x, dist_y, dist_z);
+					vec3d* rand_loc = vec_add(add_scatter->loc, dist_random);
+					free(dist_random);
+					// free(rand_loc);
+					free(add_scatter->loc);
+					add_scatter->loc = rand_loc;
+					// distance variation set
+					add_scatter->time += time_var;
+					// done adding random variation
+
+
+					scatter_list = add_to_bottom(scatter_list, add_scatter);
 				}
+				// add the electron to the list of electrons we have checked
+				int* electron_id = (int*)malloc(sizeof(int));
+				*electron_id = ((event*)detector_history->data)->id;
+				checked_electrons = add_to_bottom(checked_electrons, electron_id);
 			}
 		}
 		detector_history = detector_history->down;
@@ -1326,15 +1378,15 @@ llist* build_scatters(llist* detector_history, int id) {
 
 	// go through and add the real n value for each scatter
 	// the list will be in reverse order due to TOPAS/Geant4 call structure
-	int length = list_length(scatter_list);
-	llist* head = scatter_list;
-	for (int i = 0; i < length; i++) {
-		scatter_truth* true_info = ((scatter*)(head->data))->truth;
-		if (true_info != NULL) {
-			true_info->true_n = length - i;
-		}
-		head = head->down;
-	}
+	// int length = list_length(scatter_list);
+	// llist* head = scatter_list;
+	// for (int i = 0; i < length; i++) {
+	// 	scatter_truth* true_info = ((scatter*)(head->data))->truth;
+	// 	if (true_info != NULL) {
+	// 		true_info->true_n = length - i;
+	// 	}
+	// 	head = head->down;
+	// }
 
 	return scatter_list;
 }
@@ -1770,9 +1822,14 @@ int find_annih_gamma(event* item) {
 		fprintf(stderr, "find_annih_gamma passed NULL pointer\n");
 		return 0;
 	}
-	if (item->orgin[0] == 'a') {
+	if (item->particle == 22) {
 		return item->id;
 	}
+	
+	// no longer works without origin data
+	// if (item->orgin[0] == 'a') {
+	// 	return item->id;
+	// }
 	return 0;
 }
 
@@ -1882,11 +1939,11 @@ int main(int argc, char **argv) {
 	// we are looking for an input histories file, an output file name,
 	// and an inner radius of the detector this may later be changed to
 	// input histories, input data file, output file name
-	if (argc != 4) {
-		printf("Unable to run. Expected 3 arguments got %i.\n", argc - 1);
+	if (argc < 4) {
+		printf("Unable to run. Expected at least 3 arguments got %i.\n", argc - 1);
 		printf("Expects an input detector volume ");
 		printf("history file, output file name, and");
-		printf(" energy cutoff percent.\n");
+		printf(" energy cutoff percent. Can be followed by -b for reading binary files\n");
 		return 1;
 	}
 	// FILE* in_histories = fopen(argv[1], "r");
@@ -1894,7 +1951,23 @@ int main(int argc, char **argv) {
 	// 	printf("Unable to open history file\n");
 	// 	return 1;
 	// }
-	FILE* in_det_histories = fopen(argv[1], "r");
+	FILE* in_det_histories;
+	int binary = 0;
+	if (argc > 4) {
+		for (int i = 1; i < argc; i++) {
+			if (!strcasecmp(argv[i], "-b")) {
+				// binary flag
+				binary = 1;
+			}
+		}
+	}
+	// if (binary) {
+	in_det_histories = fopen(argv[1], "r");
+	// } else {
+		// in_det_histories = fopen(argv[1], "r");
+	// }
+
+	// FILE* in_det_histories = fopen(argv[1], "r");
 	if (in_det_histories == NULL) {
 		printf("Unable to open detector history file\n");
 		return 1;
@@ -1914,9 +1987,12 @@ int main(int argc, char **argv) {
 		fprintf(stderr, "tests failed, exiting\n");
 		return 1;
 	}
-
-
-	llist *in_det_hist = load_historyb(in_det_histories, read_line);
+	llist *in_det_hist = NULL;
+	if (binary) {
+		in_det_hist = load_historyb(in_det_histories, read_line_binary);
+	} else {
+		in_det_hist = load_historyb(in_det_histories, read_line);
+	}
 	uint run_num = 0;
 	first_scat_hypot = 0;
 	second_scat_hypot = 0;
@@ -1969,8 +2045,11 @@ int main(int argc, char **argv) {
 		}
 		fmap(in_det_hist, delete_event);
 		delete_list(in_det_hist);
-		in_det_hist = load_historyb(in_det_histories, read_line);
-		run_num++;
+		if (binary) {
+			in_det_hist = load_historyb(in_det_histories, read_line_binary);
+		} else {
+			in_det_hist = load_historyb(in_det_histories, read_line);
+		}		run_num++;
 
 		// if (cur_thread + 1 < MAX_THREAD_CALLS) {
 		// 	cur_thread++;
