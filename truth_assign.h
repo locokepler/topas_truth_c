@@ -4,16 +4,18 @@
 #include "vector_ops.h"
 #include <stdio.h>
 
+#define ORIGIN_BUFFER 22
+
 typedef unsigned int uint;
 
 typedef struct event_ {
   uint number;
   double energy;
-  double depoisted;
+  double deposited;
   vec3d* location;
   double tof;
   int particle;
-  char orgin[22];
+  char orgin[ORIGIN_BUFFER];
   int id;
 } event;
 
