@@ -1007,7 +1007,7 @@ scatter** find_endpoints_2hist(llist* detector_history, double energy_percent) {
  * annihilation. If there is a problem (such as not having two endpoints) it
  * returns -1 as a reject value.
  */
-double first_scat_miss(scatter** endpoints, vec3d* annh_loc) {
+double first_scat_miss_transverse(scatter** endpoints, vec3d* annh_loc) {
 	if ((endpoints == NULL) || (annh_loc == NULL)) {
 		return -1.;
 	}
