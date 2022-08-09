@@ -80,10 +80,27 @@ void* free_lor(void* in) {
 
 // takes a render (for the array), a double to add to it, and the location to
 // do so. The indexes array should be of length 3, an x, y, and z coord.
+// does basic addition of doubles
 void add_double(render* u, double x, int* indexes) {
 	u->volume[indexes[0] * u->dimensions[1] * u->dimensions[2]
 				+ indexes[1] * u->dimensions[2]
 				+ indexes[2]] += x;
+	return;
+}
+
+// takes a render (for the array), a double to add to it, and the location to
+// do so. The indexes array should be of length 3, an x, y, and z coord.
+// does addition of doubles and then also a multiplicative combination with
+// log reduction
+void add_mult_log(render* u, double x, int* indexes) {
+	u->volume[indexes[0] * u->dimensions[1] * u->dimensions[2]
+				+ indexes[1] * u->dimensions[2]
+				+ indexes[2]] += x;
+	u->volume[indexes[0] * u->dimensions[1] * u->dimensions[2]
+				+ indexes[1] * u->dimensions[2]
+				+ indexes[2]] += log((u->volume[indexes[0] * u->dimensions[1] * u->dimensions[2]
+				+ indexes[1] * u->dimensions[2]
+				+ indexes[2]]) * x + 1.0);
 	return;
 }
 
@@ -167,10 +184,17 @@ render* read_render_def(FILE* input) {
 	new->max_corner = high_corner;
 	new->cutoff = cutoff;
 
-	if (!strncmp("addition", method, 8)) {
+	// printf("%s\n", method);
+
+	if (strncmp("addition", method, 9) == 0) {
+		// fprintf(stderr, "combine using addition\n");
 		new->combiner = add_double;
+	} else if (strncmp("add_multiplication_log", method, 23) == 0) {
+		// fprintf(stderr, "combine using addition + log(multiplication)\n");
+		new->combiner = add_mult_log;
 	} else {
 		// for if no coorect value was given (or I messed up checking them)
+		fprintf(stderr, "WARN: Mo addition method matched, using addition.\n");
 		new->combiner = add_double;
 	}
 
@@ -178,7 +202,6 @@ render* read_render_def(FILE* input) {
 
 	// add stuff to handle various choices of conversion here when needed.
 
-	new->combiner = add_double;
 	return new;
 }
 
@@ -631,8 +654,13 @@ void print_definition(render* rend) {
 	printf("\n\t\t");
 	vec_print(rend->max_corner, stdout);
 	printf("\n");
+	printf("\tCombination method: ");
 	if (rend->combiner == add_double) {
-		printf("\tCombination method: addition\n");
+		printf("addition\n");
+	} else if (rend->combiner == add_mult_log) {
+		printf("addition with log(multiplication)\n");
+	} else {
+		printf("unknown pointer\n");
 	}
 }
 
