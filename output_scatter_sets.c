@@ -26,7 +26,7 @@ event* read_line(FILE* source) {
 	double z;
 	double tof;
 	int particle;
-	char origin[20];
+	// char origin[20];
 	int count;
 
 	int worked;
@@ -39,7 +39,7 @@ event* read_line(FILE* source) {
 	worked = fscanf(source, "%lf", &z);
 	worked = fscanf(source, "%lf", &tof);
 	worked = fscanf(source, "%i", &particle);
-	worked = fscanf(source, "%s", origin);
+	// worked = fscanf(source, "%s", origin);
 	worked = fscanf(source, "%i", &count);
 
 	if (worked == EOF) {
@@ -53,12 +53,14 @@ event* read_line(FILE* source) {
 	}
 	new_event->number 		= numb;
 	new_event->energy 		= energy;
-	new_event->depoisted 	= deposit;
+	new_event->deposited 	= deposit;
 	new_event->location 	= three_vec(x,y,z);
 	new_event->tof 			= tof;
 	new_event->particle 	= particle;
-	strcpy(new_event->orgin, origin);
+	// strcpy(new_event->orgin, origin);
 	new_event->id		= count;
+	new_event->orgin[0]		= (char)0;
+
 
 	// if (READ_DEBUG) {
 	// 	print_event((void*)new_event);
@@ -94,11 +96,11 @@ event* duplicate_event(event* source) {
 	event* new_event = (event*)malloc(sizeof(event));
 	new_event->number		= source->number;
 	new_event->energy		= source->energy;
-	new_event->depoisted	= source->depoisted;
+	new_event->deposited	= source->deposited;
 	new_event->location		= vec_copy(source->location);
 	new_event->tof			= source->tof;
 	new_event->particle		= source->particle;
-	strcpy(new_event->orgin, source->orgin);
+	strncpy(new_event->orgin, source->orgin, ORIGIN_BUFFER);
 	new_event->id			= source->id;
 	return new_event;
 }
