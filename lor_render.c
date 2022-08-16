@@ -104,6 +104,22 @@ void add_mult_log(render* u, double x, int* indexes) {
 	return;
 }
 
+// takes a render (for the array), a double to add to it, and the location to
+// do so. The indexes array should be of length 3, an x, y, and z coord.
+// does addition of doubles and then also a multiplicative combination with
+// log reduction
+void add_mult(render* u, double x, int* indexes) {
+	u->volume[indexes[0] * u->dimensions[1] * u->dimensions[2]
+				+ indexes[1] * u->dimensions[2]
+				+ indexes[2]] += x;
+	u->volume[indexes[0] * u->dimensions[1] * u->dimensions[2]
+				+ indexes[1] * u->dimensions[2]
+				+ indexes[2]] += ((u->volume[indexes[0] * u->dimensions[1] * u->dimensions[2]
+				+ indexes[1] * u->dimensions[2]
+				+ indexes[2]]) * (x + 1));
+	return;
+}
+
 // takes a render (for the arry), a double to add to it, and the location to do
 // so. The indexes should be of length 3, and x, y, and z coord. Adds a 1 to the
 // volume no matter what. You read that right. Its binary addition. If you call
@@ -115,6 +131,14 @@ void add_binary(render* u, double x, int* indexes) {
 	return;
 }
 
+// takes a render (for the arry), a double to add to it, and the location to do
+// so. The indexes should be of length 3, and x, y, and z coord. Adds the log of
+// the value given
+void add_log(render* u, double x, int* indexes) {
+	u->volume[indexes[0] * u->dimensions[1] * u->dimensions[2]
+				+ indexes[1] * u->dimensions[2]
+				+ indexes[2]] += log(x + 1);
+	return;}
 
 // takes two corner defintions and rebuilds them so that they have one of all
 // low values and one of all high values. Makes iteration simpler.
@@ -197,14 +221,18 @@ render* read_render_def(FILE* input) {
 
 	// printf("%s\n", method);
 
-	if (strncmp("addition", method, 9) == 0) {
+	if (strncasecmp("addition", method, 9) == 0) {
 		// fprintf(stderr, "combine using addition\n");
 		new->combiner = add_double;
-	} else if (strncmp("add_multiplication_log", method, 23) == 0) {
+	} else if (strncasecmp("add_multiplication_log", method, 23) == 0) {
 		// fprintf(stderr, "combine using addition + log(multiplication)\n");
 		new->combiner = add_mult_log;
-	} else if (strncmp("add_binary", method, 11) == 0) {
+	} else if (strncasecmp("add_multiplication", method, 19) == 0) {
+		new->combiner = add_mult;
+	} else if (strncasecmp("add_binary", method, 11) == 0) {
 		new->combiner = add_binary;
+	} else if (strncasecmp("add_log", method, 8) == 0) {
+		new->combiner = add_log;
 	} else {
 		// for if no coorect value was given (or I messed up checking them)
 		fprintf(stderr, "WARN: Mo addition method matched, using addition.\n");
@@ -672,8 +700,12 @@ void print_definition(render* rend) {
 		printf("addition\n");
 	} else if (rend->combiner == add_mult_log) {
 		printf("addition with log(multiplication)\n");
+	} else if (rend->combiner == add_mult) {
+		printf("addition with multiplication\n");
 	} else if (rend->combiner == add_binary) {
 		printf("addition with binary lor\n");
+	} else if (rend->combiner == add_log) {
+		printf("addition of log values\n");
 	} else {
 		printf("unknown pointer\n");
 	}
