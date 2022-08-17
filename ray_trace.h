@@ -11,6 +11,7 @@ typedef struct _shape_holder shape;
 typedef struct _ray_trace ray;
 typedef struct _traversal traversal;
 typedef struct _multi_shape geometry;
+typedef unsigned int uint;
 
 struct _shape_holder {
   int type; // a holder for what type of 

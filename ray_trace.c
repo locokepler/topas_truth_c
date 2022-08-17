@@ -1,5 +1,4 @@
 #include "vector_ops.h"
-#include "llist.h"
 #include "ray_trace.h"
 #include <stdlib.h>
 #include <math.h>
@@ -32,7 +31,7 @@
 
 // builds a ray structure
 ray* ray_build(vec3d* pos, vec3d* dir) {
-    if ((pos == NULL) || (dir = NULL)) {
+    if ((pos == NULL) || (dir == NULL)) {
         return NULL;
     }
     ray* new = (ray*)malloc(sizeof(ray));
@@ -87,8 +86,10 @@ traversal* traversal_copy(traversal* src) {
 }
 
 void traversal_free(traversal* src) {
-    free(src->intersection);
-    free(src);
+    if (src != NULL) {        
+        free(src->intersection);
+        free(src);
+    }
 }
 
 shape* shape_build(int type, float* pos, float* dim, int axis, float attenuation) {
@@ -102,15 +103,15 @@ shape* shape_build(int type, float* pos, float* dim, int axis, float attenuation
     for (int i = 0; i < 3; i++) {
         new->pos[i] = pos[i];
     }
-    if (type = REC_PRISM) {
+    if (type == REC_PRISM) {
         for (int i = 0; i < 3; i++) {
             new->dim[i] = dim[i];
         }
-    } else if (type = CYLINDER) {
+    } else if (type == CYLINDER) {
         for (int i = 0; i < 2; i++) {
             new->dim[i] = dim[i];
         }
-    } else if (type = SPHERE) {
+    } else if (type == SPHERE) {
         new->dim[0] = dim[0];
     } else {
         fprintf(stderr, "shape_build: passed non-valid shape\n");
@@ -181,7 +182,7 @@ traversal* plane_intersect_rec(float size[2], int axis, vec3d* center_src, ray* 
         return NULL;
     }
     // rotate everything so that it is all lined up
-    vec3d* center = vec_copy(center);
+    vec3d* center = vec_copy(center_src);
     ray* propagate = ray_copy(propagate_src);
     coord_transfer(center, axis);
     coord_transfer(propagate->pos, axis);
@@ -222,7 +223,7 @@ traversal* plane_intersect_circle(float size, int axis, vec3d* center_src, ray* 
         return NULL;
     }
     // rotate everything so that it is all lined up
-    vec3d* center = vec_copy(center);
+    vec3d* center = vec_copy(center_src);
     ray* propagate = ray_copy(propagate_src);
     coord_transfer(center, axis);
     coord_transfer(propagate->pos, axis);
@@ -282,7 +283,7 @@ traversal* exit_rectangular_prism(ray* path, shape* prism, int* full_crossing) {
             size[1] = prism->dim[i - 1];
         }
         // get the offset of the plane we will check from the center of the shape
-        double offset = size[i] * 0.5;
+        double offset = prism->dim[i] * 0.5;
         // centerpoints of the planes
         vec3d* direction_p = three_vec(prism->pos[0] + (offset * (i == 0)),
                                         prism->pos[1] + (offset * (i == 1)),
@@ -367,8 +368,9 @@ double* sphere_crossing(ray* path, vec3d* center, double r) {
         // no distance spent inside of the sphere
         return NULL;
     }
-    double t_high = -u_dot_st_ls_sph + determinator;
-    double t_low  = -u_dot_st_ls_sph - determinator;
+    double determined = sqrt(determinator);
+    double t_high = -u_dot_st_ls_sph + determined;
+    double t_low  = -u_dot_st_ls_sph - determined;
     double* crossings = (double*)malloc(2 * sizeof(double));
     crossings[0] = t_low;
     crossings[1] = t_high;
@@ -391,7 +393,7 @@ traversal* exit_sphere(ray* path, shape* sphere, int* full_crossing){
         full_crossing[0] = 0;
     }
     vec3d* sphere_center = three_vec(sphere->pos[0], sphere->pos[1], sphere->pos[2]);
-    int* crossings = sphere_crossing(path, sphere_center, sphere->dim[0]);
+    double* crossings = sphere_crossing(path, sphere_center, sphere->dim[0]);
     free(sphere_center);
     if (crossings == NULL) {
         return NULL;
@@ -403,7 +405,7 @@ traversal* exit_sphere(ray* path, shape* sphere, int* full_crossing){
         traversal* exit = traversal_build(vec_add(dist, path->pos), t_high - t_low);
         free (dist);
         if (full_crossing != NULL) {
-            full_crossing = 1;
+            full_crossing[0] = 1;
         }
         return exit;
     } else if (t_high > 0) {
@@ -475,10 +477,19 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
     coord_transfer(center, cyl->axis + 1);
     coord_transfer(ray_dir, cyl->axis + 1);
     coord_transfer(ray_pos, cyl->axis + 1);
-    // project onto xy plane
+    // project onto xy plane (but keep the z avaliable for later)
+
+    double z_dir = ray_dir->z;
     ray_dir->z = 0.0;
+    double z_pos = ray_pos->z;
     ray_pos->z = 0.0;
+    double z_center = center->z;
     center->z = 0.0;
+    double flat_mag = vec_mag(ray_dir);
+    double inverse_mag = 1.0 / flat_mag;
+    vec3d* ray_dir_nnorm = ray_dir;
+    ray_dir = vec_scaler(ray_dir_nnorm, inverse_mag);
+    free(ray_dir_nnorm);
     ray* new_path = ray_build(ray_pos, ray_dir);
     free(ray_dir);
     free(ray_pos);
@@ -489,6 +500,16 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
         return plane_intersect;
     } else {
         // calculate the z intersection points
+        // first correct the lengths given by the normalization used
+        flat_cyl[0] *= inverse_mag;
+        flat_cyl[1] *= inverse_mag;
+        // re-add z component of position and direction for endpoint calcs
+        new_path->pos->z = z_pos;
+        new_path->dir->z = z_dir;
+        center->z = z_center;
+        // adjust x and y directions back to unit values.
+        new_path->dir->x *= flat_mag;
+        new_path->dir->y *= flat_mag;
         vec3d* ends[2];
         int num_end = 0;
         for (int i = 0; i < 2; i++) {
@@ -511,6 +532,8 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
         }
         free(center);
         ray_free(new_path);
+        coord_transfer(ends[0], -(cyl->axis + 1));
+        coord_transfer(ends[1], -(cyl->axis + 1));
         // we now have the available ends: plane_intersect, ends[0], ends[1]
         // no more than 2 of 3 can exist
         if (num_end == 0) {
@@ -519,15 +542,26 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
         }
         if (num_end == 1) {
             // one interaction occured, could be 0 or 1
+            traversal* out;
             if (ends[0] != NULL) {
-                traversal* out = traversal_build(ends[0], flat_cyl[0]);
-                free(flat_cyl);
-                return out;
+                out = traversal_build(ends[0], flat_cyl[0]);
             } else {
-                traversal* out = traversal_build(ends[1], flat_cyl[1]);
-                free(flat_cyl);
-                return out;
+                out = traversal_build(ends[1], flat_cyl[1]);
             }
+            free(flat_cyl);
+            if ((plane_intersect != NULL) && (plane_intersect->t > 0)) {
+                if (plane_intersect->t > out->t) {
+                    plane_intersect->t = plane_intersect->t - out->t;
+                    traversal_free(out);
+                    return plane_intersect;
+                } else {
+                    out->t = out->t - plane_intersect->t;
+                    traversal_free(plane_intersect);
+                    return out;
+                }
+            }
+            traversal_free(plane_intersect);
+            return out;
         } else {
             double dist = abs(flat_cyl[0] - flat_cyl[1]);
             if (flat_cyl[0] > flat_cyl[1]) {
@@ -562,7 +596,7 @@ double propagate(ray* path_src, geometry* all) {
         return -1; // errorcode
     }
     ray* path = ray_copy(path_src);
-    char* mask = (char*)malloc(sizeof(char) * all->size);
+    char* mask = (char*)calloc(sizeof(char), all->size);
     // will act as a bitmask to show what geometry componets have already been
     // searched
     traversal** crossings = (traversal**)calloc(all->size, sizeof(traversal*));
@@ -598,8 +632,8 @@ double propagate(ray* path_src, geometry* all) {
                 path->pos = vec_copy(crossings[i]->intersection);
                 // clean up the crossings array
                 for (int j = 0; j <= i; j++) {
-                    traversal_free(crossings[i]);
-                    crossings[i] = NULL;
+                    traversal_free(crossings[j]);
+                    crossings[j] = NULL;
                 }
                 // restart the search at the beginning
                 i = 0;
@@ -614,6 +648,11 @@ double propagate(ray* path_src, geometry* all) {
                     closest = entry_dist;
                     best_find = i;
                 }
+            } else {
+                // no crossing occured in the direction of travel of the array,
+                // so this geometry component will not factor into our future
+                // work.
+                mask[i] = 1;
             }
         }
         if ((i + 1 == all->size) && (best_find >= 0)) {
@@ -625,8 +664,8 @@ double propagate(ray* path_src, geometry* all) {
             path->pos = vec_copy(crossings[best_find]->intersection);
             // clean up the crossings array
             for (int j = 0; j <= i; j++) {
-                traversal_free(crossings[i]);
-                crossings[i] = NULL;
+                traversal_free(crossings[j]);
+                crossings[j] = NULL;
             }
             // restart the search at the beginning
             i = 0;
@@ -634,6 +673,13 @@ double propagate(ray* path_src, geometry* all) {
             best_find = -1;
         }
     }
+    for (int j = 0; j < all->size; j++) {
+        traversal_free(crossings[j]);
+        crossings[j] = NULL;
+    }
+    free(crossings);
+    free(mask);
+    return distance;
 }
 
 // now for a group of test cases and similar functions
@@ -643,7 +689,7 @@ int test_prism_1() {
     // build the prism for testing
     float pos[3] = {1.0, -1.0, 1.0};
     float dim[3] = {2.0, 4.0, 2.0};
-    shape* box = shape_build(REC_PRISM, &pos, &dim, 0, 1.0);
+    shape* box = shape_build(REC_PRISM, pos, dim, 0, 1.0);
     vec3d* start = three_vec(1.0, 3.0, -2.0);
     vec3d* point = three_vec(0.0, -2.0, 1.0);
     vec3d* unit_point = vec_norm(point);
@@ -675,6 +721,8 @@ int test_prism_1() {
     }
     if (fail) {
         fprintf(stderr, "test_prism_1: exiting with %i errors\n", fail);
+    } else {
+        printf("test_prism_1: passed tests\n");
     }
     traversal_free(test);
     return !fail;
@@ -688,7 +736,7 @@ int test_sphere_1() {
     // build the sphere for testing
     float pos[3] = {1.0, -1.0, 1.0};
     float dim[3] = {2.0, 4.0, 2.0};
-    shape* sphere = shape_build(SPHERE, &pos, &dim, 0, 1.0);
+    shape* sphere = shape_build(SPHERE, pos, dim, 0, 1.0);
     vec3d* start = three_vec(0.0, 2.0, 1.0);
     vec3d* point = three_vec(1.0, -1.0, 0.0);
     vec3d* unit_point = vec_norm(point);
@@ -720,6 +768,8 @@ int test_sphere_1() {
     }
     if (fail) {
         fprintf(stderr, "test_sphere_1: exiting with %i errors\n", fail);
+    } else {
+        printf("test_sphere_1: passed tests\n");
     }
     traversal_free(test);
     return !fail;
@@ -733,7 +783,7 @@ int test_cyl_1() {
     // build the sphere for testing
     float pos[3] = {1.0, -1.0, 1.0};
     float dim[3] = {1.0, 2.0, 2.0}; // radius 1, height 2
-    shape* cyl = shape_build(CYLINDER, &pos, &dim, 1, 1.0);
+    shape* cyl = shape_build(CYLINDER, pos, dim, 1, 1.0);
     vec3d* start = three_vec(-1.0, -2.0, 1.0);
     vec3d* point = three_vec(1.0, 1.0, 0.0);
     vec3d* unit_point = vec_norm(point);
@@ -742,11 +792,17 @@ int test_cyl_1() {
     geometry* world = geometry_build(&cyl, 1);
     double dist = propagate(path, world);
     int full;
-    traversal* test = exit_sphere(path, cyl, &full);
+    traversal* test = exit_cyl(path, cyl, &full);
+
 
     free(cyl);
     free(world);
     ray_free(path);
+
+    if (test == NULL) {
+        fprintf(stderr, "test_cyl_1: exit_sphere failed to give result\n");
+        return 0;
+    }
 
     int fail = 0;
     if (!full) {
@@ -765,6 +821,8 @@ int test_cyl_1() {
     }
     if (fail) {
         fprintf(stderr, "test_cyl_1: exiting with %i errors\n", fail);
+    } else {
+        printf("test_cyl_1: passed tests\n");
     }
     traversal_free(test);
     return !fail;
