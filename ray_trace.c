@@ -65,6 +65,7 @@ void ray_free(ray* src) {
     if (src->pos != NULL) {
         free(src->pos);
     }
+    free(src);
 }
 
 traversal* traversal_build(vec3d* intersect, double t) {
@@ -193,11 +194,15 @@ traversal* plane_intersect_rec(float size[2], int axis, vec3d* center_src, ray* 
     double x_hl = 0.5 * size[0];
     if ((x_cross > (x_hl + center->x)) || (x_cross < (-x_hl + center->x))) {
         // we missed the x edge of the plane, no intersection
+        free(center);
+        ray_free(propagate);
         return NULL;
     }
     double y_cross = propagate->pos->y + (propagate->dir->y * t);
     double y_hl = 0.5 * size[1];
     if ((y_cross > (y_hl + center->y)) || (y_cross < (-y_hl + center->y))) {
+        free(center);
+        ray_free(propagate);
         return NULL;
     }
     vec3d* intersection = three_vec(x_cross, y_cross, center->z);
@@ -238,6 +243,8 @@ traversal* plane_intersect_circle(float size, int axis, vec3d* center_src, ray* 
     double disp2 = (x_disp * x_disp) + (y_disp * y_disp);
     if (rad2 < disp2) {
         // intersection not within the given radius
+        free(center);
+        ray_free(propagate);
         return NULL;
     }
     vec3d* intersection = three_vec(x_cross, y_cross, center->z);
@@ -400,6 +407,7 @@ traversal* exit_sphere(ray* path, shape* sphere, int* full_crossing){
     }
     double t_high = crossings[1];
     double t_low  = crossings[0];
+    free(crossings);
     if (t_low > 0) {
         vec3d* dist = vec_scaler(path->dir, t_high);
         traversal* exit = traversal_build(vec_add(dist, path->pos), t_high - t_low);
@@ -447,23 +455,19 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
     if ((exit1 != NULL) && (exit1->t > 0)) {
         plane_intersect = exit1;
         if ((exit2 != NULL) && (exit2->t > 0)) {
+            if (full_crossing != NULL) {
+                full_crossing[0] = 1;
+            }
+            free(center);
             if (exit1->t > exit2->t) {
                 double dist = exit1->t - exit2->t;
                 exit1->t = dist;
                 free(exit2);
-                free(center);
-                if (full_crossing != NULL) {
-                    full_crossing[0] = 1;
-                }
                 return exit1;
             } else {
                 double dist = exit2->t - exit1->t;
                 exit2->t = dist;
                 free(exit1);
-                free(center);
-                if (full_crossing != NULL) {
-                    full_crossing[0] = 1;
-                }
                 return exit2;
             }
         }
@@ -491,8 +495,6 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
     ray_dir = vec_scaler(ray_dir_nnorm, inverse_mag);
     free(ray_dir_nnorm);
     ray* new_path = ray_build(ray_pos, ray_dir);
-    free(ray_dir);
-    free(ray_pos);
     double* flat_cyl = sphere_crossing(new_path, center, cyl->dim[0]);
     if (flat_cyl == NULL) {
         ray_free(new_path);
@@ -550,6 +552,9 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
             }
             free(flat_cyl);
             if ((plane_intersect != NULL) && (plane_intersect->t > 0)) {
+                if (full_crossing != NULL) {
+                    full_crossing[0] = 1;
+                }
                 if (plane_intersect->t > out->t) {
                     plane_intersect->t = plane_intersect->t - out->t;
                     traversal_free(out);
@@ -563,6 +568,9 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
             traversal_free(plane_intersect);
             return out;
         } else {
+            if (full_crossing != NULL) {
+                full_crossing[0] = 1;
+            }
             double dist = abs(flat_cyl[0] - flat_cyl[1]);
             if (flat_cyl[0] > flat_cyl[1]) {
                 free(flat_cyl);
@@ -679,6 +687,7 @@ double propagate(ray* path_src, geometry* all) {
     }
     free(crossings);
     free(mask);
+    ray_free(path);
     return distance;
 }
 
