@@ -5,11 +5,17 @@
 #include "vector_ops.h"
 #include "lor.h"
 #include <pthread.h>
+#include <ray_trace.h>
+#include "llist.h"
 
 #define MAX_THREAD_CALLS 4
 
 pthread_t tid[MAX_THREAD_CALLS];
 pthread_mutex_t volume_lock;
+
+geometry* objects = NULL;
+
+double (*long_func)(double, double) = NULL;
 
 typedef struct _intvec {
 	int a;
@@ -246,6 +252,64 @@ render* read_render_def(FILE* input) {
 	return new;
 }
 
+// reads a file and gets all of the geometry definitions from it
+// a shape is defined as: type, center_x, center_y, center_z, dim_1, dim_2,
+// dim_3, axis, attenuation
+geometry* read_geometry(FILE* input) {
+	if (input == NULL) {
+		fprintf(stderr, "WARN: no geometry found, continuing without attenuation\n");
+		return NULL;
+	}
+	char* type[64];
+	int worked;
+	llist* llist_geo = NULL;
+	int cont = 1;
+	int geo_size = 0;
+
+	while (cont) {
+		worked = fscanf(input, "%s,", type);
+		float* posit = (float*)malloc(sizeof(float) * 3);
+		worked = worked && fscanf(input, "%f, %f, %f,", posit[0], posit[1], posit[2]);
+		float* dims = (float*)malloc(sizeof(float) * 3);
+		worked = worked && fscanf(input, "%f, %f, %f,", dims[0], dims[1], dims[2]);
+		int axis;
+		float attenuation;
+		worked = worked && fscanf(input, "%i, %f", axis, attenuation);
+		int type_int;
+		if (strncasecmp(type, "cylinder", 9) == 0) {
+			type_int = CYLINDER;
+		} else if (strncasecmp(type, "prism", 6) == 0) {
+			type_int = REC_PRISM;
+		} else if (strncasecmp(type, "sphere", 7) == 0) {
+			type_int = SPHERE;
+		} else {
+			type_int = 0;
+			fprintf(stderr, "ERROR: shape has non-valid name\n");
+		}
+		if (worked) {
+			shape* new = shape_build(type_int, posit, dims, axis, attenuation);
+			llist_geo = add_to_bottom(llist_geo, new);
+			geo_size++;
+		} else {
+			cont = 0;
+		}
+	}
+	// now that we have gone through all of the shapes to be added, make them
+	// into a single array
+	llist* working_list = list_head(llist_geo);
+	shape** array = (shape**)malloc(sizeof(shape*) * geo_size);
+	for (int i = 0; (i < geo_size) && (working_list != NULL); i++) {
+		array[i] = (shape*)(working_list->data);
+		working_list->data = NULL;
+		working_list = working_list->down;
+	}
+	delete_list(llist_geo);
+	geometry* new = (geometry*)malloc(sizeof(geometry));
+	new->size = geo_size;
+	new->geo = array;
+	return new;
+}
+
 /* 
  * space_to_vox
  * converts from spacial coordiantes (typically in cm) to the voxel coordinates.
@@ -392,6 +456,30 @@ double centered_normal(double sigma, double x) {
 	double exponent = -0.5 * (fraction * fraction);
 	return exp(exponent);
 }
+double centered_binary(double sigma, double x) {
+	return 1.0;
+}
+
+/* 
+ * takes a lor and a geometry and finds out what the probability of attenuation
+ * was for the given lor. To do this it projects a ray forward along the lor
+ * with propagate and one backwards along the lor. The combined distances times
+ * attenuation coefficents are then added together to get the normalization
+ */
+double atten_correction(lor* lor) {
+	if ((lor == NULL) || (objects == NULL)) {
+		return 1.0;
+	}
+	vec3d* dir_back = vec_sub(NULL, lor->dir);
+	ray* ray_1 = ray_build(vec_copy(lor->center), vec_norm(lor->dir));
+	ray* ray_2 = ray_build(vec_copy(lor->center), vec_norm(dir_back));
+	free(dir_back);
+	double atten = propagate(ray_1, objects);
+	atten += propagate(ray_2, objects);
+	ray_free(ray_1);
+	ray_free(ray_2);
+	return exp(-atten);
+}
 
 /*
  * add_lor
@@ -536,6 +624,8 @@ void add_lor_plane(render* universe, lor* lor) {
 	// low_x = 0;
 	// high_x = universe->dimensions[0] - 1;
 
+	// get the attenuation correction value
+	double attenuation = atten_correction(lor);
 
 	// high and low of each var now defines the maximum extent box, now we
 	// define the size of the elipse made by a cylindrical section of the LOR.
@@ -668,7 +758,7 @@ void add_lor_plane(render* universe, lor* lor) {
 					// longitudinal distance from the lor center to the point
 					if (longitudinal < (universe->cutoff * lor->long_uncert)) {
 						// we are within the processing column (area of useful adding values)
-						double lon_normal = centered_normal(lor->long_uncert, longitudinal);
+						double lon_normal = long_func(lor->long_uncert, longitudinal);
 						double trans_normal = centered_normal(lor->transverse_uncert, transverse);
 						double total_value = lon_normal * trans_normal;
 
@@ -760,7 +850,7 @@ void* wrapper_add_lor_plane(void *a) {
 int main(int argc, char const *argv[])
 {
 	// expected inputs: lor file name, output file name, rendering def file name
-	if (argc != 4) {
+	if (argc < 4) {
 		if (!strncmp(argv[1], "-h",2) || !strncmp(argv[1], "-H",2)) {
 			printf("Kepler's lor renderer: \nThis is designed to be used with");
 			printf(" the reverse kinematics code running on a TOPAS simulation.");
@@ -792,6 +882,32 @@ int main(int argc, char const *argv[])
 	if (input_lor == NULL) {
 		fprintf(stderr, "Unable to open LOR file.\n");
 		return 1;
+	}
+
+	if (argc > 4) {
+		for (int i = 1; i < argc; i++) {
+			if (!strncasecmp(argv[i], "-g", 3)) {
+				if (argc > (i + 1)) {
+					// load the geometry
+					FILE* in_geo = fopen(argv[i+1], "r");
+					if (in_geo != NULL) {
+						objects = read_geometry(in_geo);
+						fclose(in_geo);
+					}
+					if (objects == NULL) {
+						fprintf(stderr, "WARN: unable to load geometry\n");
+					}
+				} else {
+					printf("put -g flag before path to geometry file\n");
+				}
+			}
+			if (!strncasecmp(argv[i], "-lb", 4)) {
+				long_func = centered_binary;
+			}
+		}
+	}
+	if (long_func == NULL) {
+		long_func = centered_normal;
 	}
 
 	if (pthread_mutex_init(&volume_lock, NULL)) {
