@@ -40,15 +40,18 @@ struct _multi_shape {
 ray* ray_build(vec3d* pos, vec3d* dir);
 
 // frees a ray structure
-void ray_free(ray* src);
+void* ray_free(ray* src);
 
 // makes a shape
 shape* shape_build(int type, float* pos, float* dim, int axis, float attenuation);
 
+// frees a shape (a free with return null)
+void* shape_free(void* a);
+
 // forms a geometry structure
 geometry* geometry_build(shape** geos, uint size);
 
-void geometry_free(geometry* a);
+void* geometry_free(geometry* a);
 
 
 /*

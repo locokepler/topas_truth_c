@@ -55,9 +55,9 @@ ray* ray_copy(ray* src) {
 }
 
 // frees a ray structure
-void ray_free(ray* src) {
+void* ray_free(ray* src) {
     if (src == NULL) {
-        return;
+        return NULL;
     }
     if (src->dir != NULL) {
         free(src->dir);
@@ -66,6 +66,7 @@ void ray_free(ray* src) {
         free(src->pos);
     }
     free(src);
+    return NULL;
 }
 
 traversal* traversal_build(vec3d* intersect, double t) {
@@ -122,6 +123,14 @@ shape* shape_build(int type, float* pos, float* dim, int axis, float attenuation
     return new;
 }
 
+void* shape_free(void* a) {
+    if (a == NULL) {
+        return NULL;
+    }
+    free(a);
+    return(NULL);
+}
+
 geometry* geometry_build(shape** geos, uint size) {
     geometry* new = malloc(sizeof(geometry));
     new->geo = geos;
@@ -129,7 +138,7 @@ geometry* geometry_build(shape** geos, uint size) {
     return new;
 }
 
-void geometry_free(geometry* a) {
+void* geometry_free(geometry* a) {
     if (a != NULL) {
         for (int i = 0; i < a->size; i++) {
             free(a->geo[i]);
@@ -137,6 +146,7 @@ void geometry_free(geometry* a) {
         free(a->geo);
         free(a);
     }
+    return NULL;
 }
 
 /*
@@ -633,7 +643,7 @@ double propagate(ray* path_src, geometry* all) {
             }
             if ((crossings[i] != NULL) && (full == 0)) {
                 // we had an inside start, we can just use the given information
-                distance += crossings[i]->t;
+                distance += crossings[i]->t * next_shape->atten;
                 mask[i] = 1; // mask this geometry off
                 // move the ray
                 free(path->pos);
@@ -667,7 +677,7 @@ double propagate(ray* path_src, geometry* all) {
             // we have reached the end of the loop, but there is a crossing
             // the closest geometry entry happened with best_find.
             mask[best_find] = 1;
-            distance += crossings[best_find]->t;
+            distance += crossings[best_find]->t * (all->geo[best_find])->atten;
             free(path->pos);
             path->pos = vec_copy(crossings[best_find]->intersection);
             // clean up the crossings array
