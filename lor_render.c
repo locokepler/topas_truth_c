@@ -227,17 +227,17 @@ render* read_render_def(FILE* input) {
 
 	// printf("%s\n", method);
 
-	if (strncasecmp("addition", method, 9) == 0) {
+	if (strncasecmp("addition", method, 8) == 0) {
 		// fprintf(stderr, "combine using addition\n");
 		new->combiner = add_double;
-	} else if (strncasecmp("add_multiplication_log", method, 23) == 0) {
+	} else if (strncasecmp("add_multiplication_log", method, 22) == 0) {
 		// fprintf(stderr, "combine using addition + log(multiplication)\n");
 		new->combiner = add_mult_log;
-	} else if (strncasecmp("add_multiplication", method, 19) == 0) {
+	} else if (strncasecmp("add_multiplication", method, 18) == 0) {
 		new->combiner = add_mult;
-	} else if (strncasecmp("add_binary", method, 11) == 0) {
+	} else if (strncasecmp("add_binary", method, 10) == 0) {
 		new->combiner = add_binary;
-	} else if (strncasecmp("add_log", method, 8) == 0) {
+	} else if (strncasecmp("add_log", method, 7) == 0) {
 		new->combiner = add_log;
 	} else {
 		// for if no coorect value was given (or I messed up checking them)
@@ -260,7 +260,7 @@ geometry* read_geometry(FILE* input) {
 		fprintf(stderr, "WARN: no geometry found, continuing without attenuation\n");
 		return NULL;
 	}
-	char* type[64];
+	char type[64];
 	int worked;
 	llist* llist_geo = NULL;
 	int cont = 1;
@@ -269,12 +269,12 @@ geometry* read_geometry(FILE* input) {
 	while (cont) {
 		worked = fscanf(input, "%s,", type);
 		float* posit = (float*)malloc(sizeof(float) * 3);
-		worked = worked && fscanf(input, "%f, %f, %f,", posit[0], posit[1], posit[2]);
+		worked = worked && fscanf(input, "%f, %f, %f,", &posit[0], &posit[1], &posit[2]);
 		float* dims = (float*)malloc(sizeof(float) * 3);
-		worked = worked && fscanf(input, "%f, %f, %f,", dims[0], dims[1], dims[2]);
+		worked = worked && fscanf(input, "%f, %f, %f,", &dims[0], &dims[1], &dims[2]);
 		int axis;
 		float attenuation;
-		worked = worked && fscanf(input, "%i, %f", axis, attenuation);
+		worked = worked && fscanf(input, "%i, %f", &axis, &attenuation);
 		int type_int;
 		if (strncasecmp(type, "cylinder", 9) == 0) {
 			type_int = CYLINDER;
@@ -760,7 +760,7 @@ void add_lor_plane(render* universe, lor* lor) {
 						// we are within the processing column (area of useful adding values)
 						double lon_normal = long_func(lor->long_uncert, longitudinal);
 						double trans_normal = centered_normal(lor->transverse_uncert, transverse);
-						double total_value = lon_normal * trans_normal;
+						double total_value = lon_normal * trans_normal * attenuation;
 
 						int index[3] = {i,j,k};
 
@@ -886,7 +886,7 @@ int main(int argc, char const *argv[])
 
 	if (argc > 4) {
 		for (int i = 1; i < argc; i++) {
-			if (!strncasecmp(argv[i], "-g", 3)) {
+			if (!strncasecmp(argv[i], "-g", 2)) {
 				if (argc > (i + 1)) {
 					// load the geometry
 					FILE* in_geo = fopen(argv[i+1], "r");
@@ -901,8 +901,9 @@ int main(int argc, char const *argv[])
 					printf("put -g flag before path to geometry file\n");
 				}
 			}
-			if (!strncasecmp(argv[i], "-lb", 4)) {
+			if (!strncasecmp(argv[i], "-lb", 3)) {
 				long_func = centered_binary;
+				printf("using centered binary for longitudinal\n");
 			}
 		}
 	}
