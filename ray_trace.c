@@ -157,7 +157,7 @@ void* geometry_free(geometry* a) {
  * was able to do the transformation a 1 is returned. If it failed in any way it
  * returns a 0.
  */
-int coord_transfer(vec3d* coord, int axis) {
+int coord_swap(vec3d* coord, int axis) {
     if ((coord == NULL) || (axis > 3) || (axis < -3) || (axis == 0)) {
         return 0;
     }
@@ -195,9 +195,9 @@ traversal* plane_intersect_rec(float size[2], int axis, vec3d* center_src, ray* 
     // rotate everything so that it is all lined up
     vec3d* center = vec_copy(center_src);
     ray* propagate = ray_copy(propagate_src);
-    coord_transfer(center, axis);
-    coord_transfer(propagate->pos, axis);
-    coord_transfer(propagate->dir, axis);
+    coord_swap(center, axis);
+    coord_swap(propagate->pos, axis);
+    coord_swap(propagate->dir, axis);
     // find when the intersection should happen (when ray crosses z of plane)
     double t = (center->z - propagate->pos->z) / propagate->dir->z;
     double x_cross = propagate->pos->x + (propagate->dir->x * t);
@@ -218,7 +218,7 @@ traversal* plane_intersect_rec(float size[2], int axis, vec3d* center_src, ray* 
     vec3d* intersection = three_vec(x_cross, y_cross, center->z);
     // now that we have the intersection we need to rotate everything back to
     // its original position (negative axis value)
-    coord_transfer(intersection, -axis);
+    coord_swap(intersection, -axis);
     free(center);
     ray_free(propagate);
     traversal* output = traversal_build(intersection, t);
@@ -240,9 +240,9 @@ traversal* plane_intersect_circle(float size, int axis, vec3d* center_src, ray* 
     // rotate everything so that it is all lined up
     vec3d* center = vec_copy(center_src);
     ray* propagate = ray_copy(propagate_src);
-    coord_transfer(center, axis);
-    coord_transfer(propagate->pos, axis);
-    coord_transfer(propagate->dir, axis);
+    coord_swap(center, axis);
+    coord_swap(propagate->pos, axis);
+    coord_swap(propagate->dir, axis);
     // find when the intersection should happen (when ray crosses z of plane)
     double t = (center->z - propagate->pos->z) / propagate->dir->z;
     double x_cross = propagate->pos->x + (propagate->dir->x * t);
@@ -260,7 +260,7 @@ traversal* plane_intersect_circle(float size, int axis, vec3d* center_src, ray* 
     vec3d* intersection = three_vec(x_cross, y_cross, center->z);
     // now that we have the intersection we need to rotate everything back to
     // its original position (negative axis value)
-    coord_transfer(intersection, -axis);
+    coord_swap(intersection, -axis);
     free(center);
     ray_free(propagate);
     traversal* output = traversal_build(intersection, t);
@@ -488,9 +488,9 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
     // the cylinder points in the z axis
     vec3d* ray_dir = vec_copy(path->dir);
     vec3d* ray_pos = vec_copy(path->pos);
-    coord_transfer(center, cyl->axis + 1);
-    coord_transfer(ray_dir, cyl->axis + 1);
-    coord_transfer(ray_pos, cyl->axis + 1);
+    coord_swap(center, cyl->axis + 1);
+    coord_swap(ray_dir, cyl->axis + 1);
+    coord_swap(ray_pos, cyl->axis + 1);
     // project onto xy plane (but keep the z avaliable for later)
 
     double z_dir = ray_dir->z;
@@ -544,8 +544,8 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
         }
         free(center);
         ray_free(new_path);
-        coord_transfer(ends[0], -(cyl->axis + 1));
-        coord_transfer(ends[1], -(cyl->axis + 1));
+        coord_swap(ends[0], -(cyl->axis + 1));
+        coord_swap(ends[1], -(cyl->axis + 1));
         // we now have the available ends: plane_intersect, ends[0], ends[1]
         // no more than 2 of 3 can exist
         if (num_end == 0) {

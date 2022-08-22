@@ -5,7 +5,7 @@
 #include "vector_ops.h"
 #include "lor.h"
 #include <pthread.h>
-#include <ray_trace.h>
+#include "ray_trace.h"
 #include "llist.h"
 
 #define MAX_THREAD_CALLS 4
