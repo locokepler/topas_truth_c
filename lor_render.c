@@ -17,6 +17,8 @@ geometry* objects = NULL;
 
 double (*long_func)(double, double) = NULL;
 
+double long_adjust = 1.0;
+
 typedef struct _intvec {
 	int a;
 	int b;
@@ -49,8 +51,8 @@ lor* read_lor(FILE* input) {
 	worked = fscanf(input, "%lf,", &dir_x);
 	worked = fscanf(input, "%lf,", &dir_y);
 	worked = fscanf(input, "%lf,", &dir_z);
-	worked = fscanf(input, "%lf,", &transverse);
-	worked = fscanf(input, "%lf", &longitudinal);
+	worked = fscanf(input, "%lf,", &longitudinal);
+	worked = fscanf(input, "%lf", &transverse);
 
 	if (worked == EOF) {
 		return NULL;
@@ -66,7 +68,8 @@ lor* read_lor(FILE* input) {
 	vec3d* cleanup = three_vec(dir_x, dir_y, dir_z);
 	new->dir = vec_norm(cleanup);
 	free(cleanup);
-	new->long_uncert = longitudinal;
+	new->long_uncert = longitudinal * long_adjust;
+	// fprintf(stdout, "%lf\n", new->long_uncert);
 	new->transverse_uncert = transverse;
 
 
@@ -82,6 +85,12 @@ void* free_lor(void* in) {
 	free(clear->dir);
 	free(clear);
 	return NULL;
+}
+
+void print_lor(FILE* output, lor* lor) {
+	fprintf(output, "%f, %f, %f,", lor->center->x, lor->center->y, lor->center->z);
+	fprintf(output,  " %f, %f, %f,", lor->dir->x, lor->dir->y, lor->dir->z);
+	fprintf(output, " %f, %f", lor->long_uncert, lor->transverse_uncert);
 }
 
 // takes a render (for the array), a double to add to it, and the location to
@@ -269,24 +278,24 @@ geometry* read_geometry(FILE* input) {
 	while (cont) {
 		worked = fscanf(input, "%s,", type);
 		float* posit = (float*)malloc(sizeof(float) * 3);
-		worked = worked && fscanf(input, "%f, %f, %f,", &posit[0], &posit[1], &posit[2]);
+		worked = fscanf(input, "%f, %f, %f,", &posit[0], &posit[1], &posit[2]);
 		float* dims = (float*)malloc(sizeof(float) * 3);
-		worked = worked && fscanf(input, "%f, %f, %f,", &dims[0], &dims[1], &dims[2]);
+		worked = fscanf(input, "%f, %f, %f,", &dims[0], &dims[1], &dims[2]);
 		int axis;
 		float attenuation;
-		worked = worked && fscanf(input, "%i, %f", &axis, &attenuation);
+		worked = fscanf(input, "%i, %f", &axis, &attenuation);
 		int type_int;
-		if (strncasecmp(type, "cylinder", 9) == 0) {
+		if (strncasecmp(type, "cylinder", 8) == 0) {
 			type_int = CYLINDER;
-		} else if (strncasecmp(type, "prism", 6) == 0) {
+		} else if (strncasecmp(type, "prism", 5) == 0) {
 			type_int = REC_PRISM;
-		} else if (strncasecmp(type, "sphere", 7) == 0) {
+		} else if (strncasecmp(type, "sphere", 6) == 0) {
 			type_int = SPHERE;
 		} else {
 			type_int = 0;
 			fprintf(stderr, "ERROR: shape has non-valid name\n");
 		}
-		if (worked) {
+		if (worked != EOF) {
 			shape* new = shape_build(type_int, posit, dims, axis, attenuation);
 			llist_geo = add_to_bottom(llist_geo, new);
 			geo_size++;
@@ -460,6 +469,12 @@ double centered_binary(double sigma, double x) {
 	return 1.0;
 }
 
+double centered_laplace(double sigma, double x) {
+	double fraction = x / sigma;
+	double exponent = fabs(fraction);
+	return exp(exponent);
+}
+
 /* 
  * takes a lor and a geometry and finds out what the probability of attenuation
  * was for the given lor. To do this it projects a ray forward along the lor
@@ -478,7 +493,7 @@ double atten_correction(lor* lor) {
 	atten += propagate(ray_2, objects);
 	ray_free(ray_1);
 	ray_free(ray_2);
-	return exp(-atten);
+	return exp(atten);
 }
 
 /*
@@ -493,6 +508,8 @@ void add_lor(render* universe, lor* lor) {
 	if (universe == NULL || lor == NULL) {
 		return;
 	}
+	// print_lor(stdout, lor);
+	// printf("\n");
 	// first define the volume in which we will be operating
 	vec3d* box_diagonal = lor_box_offset(lor, universe->cutoff); // the diagonal
 	// of the box we need to operate in to catch the entire lor within the cutoff
@@ -550,7 +567,7 @@ void add_lor(render* universe, lor* lor) {
 					// we are within the processing column (area of useful adding values)
 					double lon_deviation = longitudinal / lor->long_uncert;
 					double trans_deviation = transverse / lor->transverse_uncert;
-					double lon_normal = centered_normal(lor->long_uncert, lon_deviation);
+					double lon_normal = long_func(lor->long_uncert, lon_deviation);
 					double trans_normal = centered_normal(lor->transverse_uncert, trans_deviation);
 					double total_value = lon_normal * trans_normal;
 
@@ -575,6 +592,8 @@ void add_lor_plane(render* universe, lor* lor) {
 	if (universe == NULL || lor == NULL) {
 		return;
 	}
+	// print_lor(stderr, lor);
+	// printf("\n");
 	// first define the volume in which we will be operating
 	vec3d* box_diagonal = lor_box_offset(lor, universe->cutoff); // the diagonal
 	// of the box we need to operate in to catch the entire lor within the cutoff
@@ -801,11 +820,6 @@ void print_definition(render* rend) {
 	}
 }
 
-void print_lor(FILE* output, lor* lor) {
-	fprintf(output, "%f, %f, %f,", lor->center->x, lor->center->y, lor->center->z);
-	fprintf(output,  " %f, %f, %f,", lor->dir->x, lor->dir->y, lor->dir->z);
-	fprintf(output, " %f, %f", lor->long_uncert, lor->transverse_uncert);
-}
 
 void print_volume(FILE* output, render* universe) {
 	for (int i = 0; i < universe->dimensions[0]; i++) {
@@ -904,6 +918,19 @@ int main(int argc, char const *argv[])
 			if (!strncasecmp(argv[i], "-lb", 3)) {
 				long_func = centered_binary;
 				printf("using centered binary for longitudinal\n");
+			}
+			if (!strncasecmp(argv[i], "-ll", 3)) {
+				long_func = centered_laplace;
+				printf("using centered laplace for longitudinal\n");
+			}
+			if (!strncasecmp(argv[i], "-la", 3)) {
+				if (argc > (i + 1)) {
+					// now set the longitudinal adjustment value
+					long_adjust = strtod(argv[i+1], NULL);
+					printf("longitudinal adjustment set to %lf\n", long_adjust);
+				} else {
+					fprintf(stderr, "WARN: -la flag not followed by float\n");
+				}
 			}
 		}
 	}
