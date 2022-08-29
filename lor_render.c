@@ -18,6 +18,7 @@ geometry* objects = NULL;
 double (*long_func)(double, double) = NULL;
 
 double long_adjust = 1.0;
+double trans_adjust = 1.0;
 
 typedef struct _intvec {
 	int a;
@@ -70,7 +71,7 @@ lor* read_lor(FILE* input) {
 	free(cleanup);
 	new->long_uncert = longitudinal * long_adjust;
 	// fprintf(stdout, "%lf\n", new->long_uncert);
-	new->transverse_uncert = transverse;
+	new->transverse_uncert = transverse * trans_adjust;
 
 
 	return new;
@@ -930,6 +931,15 @@ int main(int argc, char const *argv[])
 					printf("longitudinal adjustment set to %lf\n", long_adjust);
 				} else {
 					fprintf(stderr, "WARN: -la flag not followed by float\n");
+				}
+			}
+			if (!strncasecmp(argv[i], "-ta", 3)) {
+				if (argc > (i + 1)) {
+					// now set the transverse adjustment value
+					trans_adjust = strtod(argv[i+1], NULL);
+					printf("transverse adjustment set to %lf\n", trans_adjust);
+				} else {
+					fprintf(stderr, "WARN: -ta flag not followed by float\n");
 				}
 			}
 		}
