@@ -30,6 +30,7 @@ float alpha_eng_distro_n_1[FIRST_N];
 float alpha_eng_distro_n_2[FIRST_N];
 float n_eng_distro_n_1[FIRST_N];
 float n_eng_distro_n_2[FIRST_N];
+uint hist_num;
 
   
 // reads a line from the source file as an event
@@ -44,7 +45,7 @@ event* read_line(FILE* source) {
 	double z;
 	double tof;
 	int particle;
-	char origin[20];
+	// char origin[20];
 	int count;
 
 	int worked;
@@ -57,7 +58,7 @@ event* read_line(FILE* source) {
 	worked = fscanf(source, "%lf", &z);
 	worked = fscanf(source, "%lf", &tof);
 	worked = fscanf(source, "%i", &particle);
-	worked = fscanf(source, "%s", origin);
+	// worked = fscanf(source, "%s", origin);
 	worked = fscanf(source, "%i", &count);
 
 	if (worked == EOF) {
@@ -71,12 +72,14 @@ event* read_line(FILE* source) {
 	}
 	new_event->number 		= numb;
 	new_event->energy 		= energy;
-	new_event->depoisted 	= deposit;
+	new_event->deposited 	= deposit;
 	new_event->location 	= three_vec(x,y,z);
 	new_event->tof 			= tof;
 	new_event->particle 	= particle;
-	strcpy(new_event->orgin, origin);
+	// strcpy(new_event->orgin, origin);
 	new_event->id		= count;
+	new_event->orgin[0]		= (char)0;
+
 
 	// if (READ_DEBUG) {
 	// 	print_event((void*)new_event);
@@ -128,11 +131,11 @@ event* duplicate_event(event* source) {
 	event* new_event = (event*)malloc(sizeof(event));
 	new_event->number		= source->number;
 	new_event->energy		= source->energy;
-	new_event->depoisted	= source->depoisted;
+	new_event->deposited	= source->deposited;
 	new_event->location		= vec_copy(source->location);
 	new_event->tof			= source->tof;
 	new_event->particle		= source->particle;
-	strcpy(new_event->orgin, source->orgin);
+	strncpy(new_event->orgin, source->orgin, ORIGIN_BUFFER);
 	new_event->id			= source->id;
 	return new_event;
 }
@@ -269,7 +272,7 @@ int scatter_dep_compare(void* va, void* vb) {
 	}
 	scatter* a = (scatter*)va;
 	scatter* b = (scatter*)vb;
-	if (a->deposit > b->deposit) {
+	if (a->deposit < b->deposit) {
 		return 1;
 	} else if (a->deposit == b->deposit) {
 		return 0;
@@ -286,8 +289,8 @@ int partition(void** array, int low, int high, int (*f)(void*, void*)) {
 	
 	int i = low - 1;
 	// the current best location for the pivot
-	for (int j = low; j < high - 1; j++) {
-		if (f(array[j], pivot) > 0) {
+	for (int j = low; j < high; j++) {
+		if (f(array[j], pivot) < 0) {
 			i++;
 			void** holding = array[j];
 			array[j] = array[i];
@@ -476,9 +479,21 @@ double expected_uncert_b(double b, double theta, double uncert_b, double uncert_
 	numerator = b + ((2. * 511.) / one_less_theta);
 	root = b * b + ((4. * 511. * b) / one_less_theta);
 	double first_term = numerator / sqrt(root);
-	double b_der = .5 * (first_term = 1.);
+	double b_der = .5 * (first_term + 1.);
 	uncert_b = uncert_b * b_der;
+	if (GENERAL_DEBUG) {
+		printf("expected_uncert_b: b_der = %lf\n", b_der);
+		printf("expected_uncert_b: first_term = %lf\n", first_term);
+		printf("expected_uncert_b: energy uncertainty is %lf\n", uncert_b);
+		printf("expected_uncert_b: theta uncertainty is %lf\n", uncert_theta);
+	}
 
+	// double combined = 
+	// if (combined < 0) {
+	// 	fprintf(stderr, "expected_uncert_b: combined negative.\n\tHow did you get here?\n");
+	// 	fprintf(stderr, "\tcombined = %lf\n\tuncert_theta = %lf\n", combined, uncert_theta);
+	// 	fprintf(stderr, "\tuncert_b = %lf\n", uncert_b);
+	// }
 	return add_quadrature(uncert_theta, uncert_b);
 }
 
@@ -540,7 +555,10 @@ double expected_uncert_b(double b, double theta, double uncert_b, double uncert_
 	// now to calculate the uncertanty
 	if (uncert != NULL) {
 		double delta_e = expected_uncert_b(b->deposit, theta, b->eng_uncert, theta_uncert);
-		*uncert = delta_e;
+		if (delta_e < 0) {
+			fprintf(stderr, "expected_energy_b: uncertanty negative: %lf\n",delta_e);
+		}
+		uncert[0] = delta_e;
 	}
 
 	return gamma_to_b_e;
@@ -1004,7 +1022,7 @@ scatter** build_array_no_i(scatter** source, uint source_len, uint i) {
 	return result;
 }
 
-double recursive_search(double best, double current, double inc_eng, scatter* origin, scatter* loc, scatter** remaining, uint remain_count, llist** path) {
+double recursive_search(double best, double current, double inc_eng, double inc_uncert, scatter* origin, scatter* loc, scatter** remaining, uint remain_count, llist** path) {
 	if ((loc == NULL) || (remaining == NULL) || (origin == NULL) || (remain_count <= SKIP)) {
 		if (TREE_DEBUG) {
 			printf("recursive_search: end of branch\n");
@@ -1053,15 +1071,20 @@ double recursive_search(double best, double current, double inc_eng, scatter* or
 
 	for (int i = 0; i < remain_count; i++) {
 		// first calcuate the probability of our current deviation
-		double expectation = expected_energy_b(origin, loc, remaining[i], &energy_uncert);
+		double prediction = expected_energy_b(origin, loc, remaining[i], &energy_uncert);
 		if (energy_uncert < 0) {
-			fprintf(stderr, "recursive_search: negative energy error found. Check given scatter errors\n");
+			fprintf(stderr, "recursive_search: negative energy error found (%lf). Check given scatter errors\n",energy_uncert);
+			fprintf(stderr, "\terror thrown on history %i\n", hist_num);
 		}
-		double energy_error = (inc_eng - expectation) / energy_uncert; // error between
-		double new_energy = inc_eng - loc->deposit; // could maybe be the value
+		// calculate the combined error of the incoming energy and expectation
+		double comb_uncert = add_quadrature(inc_uncert, energy_uncert);
+		double energy_error = fabs(inc_eng - prediction) / comb_uncert; // error between
+		// double new_energy = inc_eng - loc->deposit; // could maybe be the value
 		// of expectation - loc->deposit
+		double new_energy = inc_eng - loc->deposit;
+		double new_eng_uncert = add_quadrature(inc_uncert, loc->eng_uncert);
 		// the a->b gamma prediction and the value from earlier in the chain
-		double step_error = add_quadrature(current, energy_error);
+		double step_error = energy_error;
 
 		// now find the error in electron direction plane
 		if (loc->dir != NULL) {
@@ -1086,7 +1109,8 @@ double recursive_search(double best, double current, double inc_eng, scatter* or
 		// done calcuating what the current paths uncertanty is, lets combine it
 		// with the current uncertanty to check if we are worse than the best
 		// solution so far.
-		double combined_error = add_quadrature(step_error, current);
+		// double combined_error = add_quadrature(step_error, current);
+		double combined_error = step_error + current;
 		if (TREE_DEBUG) {
 			printf("\tstep error: %lf, \tcombined error: %lf\n", step_error, combined_error);
 		}
@@ -1096,7 +1120,7 @@ double recursive_search(double best, double current, double inc_eng, scatter* or
 			// time to go one layer further
 			scatter** new_array = build_array_no_i(remaining, remain_count, i);
 			continuing_path = NULL;
-			double below = recursive_search(best, combined_error, new_energy, loc, remaining[i], new_array, remain_count - 1, &continuing_path);
+			double below = recursive_search(best, combined_error, new_energy, new_eng_uncert, loc, remaining[i], new_array, remain_count - 1, &continuing_path);
 
 			free(new_array);
 			if (below < better_find) {
@@ -1184,6 +1208,13 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 
 	scatter_quicksort(scatters_near, 0, len_hist_near - 1);
 	scatter_quicksort(scatters_far, 0, len_hist_far - 1);
+	if (GENERAL_DEBUG) {
+		printf("multi_gamma_stat_iteration: scatters sorted:\n");
+		for (int i = 0; i < len_hist_near; i++) {
+			printf("\t%lf\n", scatters_near[i]->deposit);
+		}
+		printf("\n");
+	}
 	// sorts the scatters by deposit energy, now only keep the largest LARGEST
 	scatter** scatters_near_short = (scatter**)malloc((LARGEST + SKIP) * sizeof(scatter*));
 	scatter** scatters_far_short = (scatter**)malloc((LARGEST + SKIP) * sizeof(scatter*));
@@ -1224,7 +1255,7 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 		for (int i = 0; i < len_hist_far; i++) {
 			llist* path = NULL;
 
-			double try = recursive_search(best_find, 0., 511., scatters_far_short[i], scatters_near_short[j], new_array, len_hist_near - 1, &path);
+			double try = recursive_search(best_find, 0., 511., 0., scatters_far_short[i], scatters_near_short[j], new_array, len_hist_near - 1, &path);
 
 			if (try < best_find) {
 				best_scatter = scatters_near[j];
@@ -1289,7 +1320,7 @@ int closest_gamma(llist* history, vec3d* target) {
 	while (history != NULL) {
 		// first, define our working event
 		working_event = (event*)history->data;
-		if ((working_event->particle == 22) && (working_event->orgin[0] == 'a')) {
+		if ((working_event->particle == 22)) {
 			// it is a gamma from an annihilation
 			double check_dist = vec_dist(target, working_event->location);
 			if (distance > check_dist) {
@@ -1355,82 +1386,90 @@ llist* build_scatters(llist* detector_history, int id) {
 			// electron_checked now contains if we have previously looked at this
 			// electron
 			if (!electron_checked) {
-				// if we haven't looked at this one yet, so is it compton based
-				if (((event*)detector_history->data)->orgin[0] == 'c') {
-					//  so which gamma is it from?
-					int gamma_id = closest_gamma(detector_history, ((event*)detector_history->data)->location);
-					if (gamma_id == id) {
-						// time to add this electron to the scatter list
-						vec3d* scatter_loc = vec_copy(((event*)detector_history->data)->location);
-						event* cur_event = (event*)detector_history->data;
-						event* next_event;
-						if (detector_history->down != NULL) {
-							next_event = (event*)detector_history->down->data;
-						} else {
-							next_event = NULL;
-						}
-						vec3d* ele_dir = NULL;
-						if ((next_event != NULL) && (cur_event->id == next_event->id)) {
-							ele_dir = vec_sub(next_event->location, ((event*)detector_history->data)->location);
-							if ((fabs(ele_dir->x) < 0.0001) && (fabs(ele_dir->y) < 0.0001) && (fabs(ele_dir->z) < 0.0001)) {
-								// no actual movement of the electron from which to find a path
-								free(ele_dir);
-								ele_dir = NULL;
-							}
-						} else {
+				//  so which gamma is it from?
+				int gamma_id = closest_gamma(detector_history, ((event*)detector_history->data)->location);
+				if (gamma_id == id) {
+					// time to add this electron to the scatter list
+					vec3d* scatter_loc = vec_copy(((event*)detector_history->data)->location);
+					event* cur_event = (event*)detector_history->data;
+					event* next_event;
+					if (detector_history->down != NULL) {
+						next_event = (event*)detector_history->down->data;
+					} else {
+						next_event = NULL;
+					}
+					vec3d* ele_dir = NULL;
+					if ((next_event != NULL) && (cur_event->id == next_event->id)) {
+						ele_dir = vec_sub(next_event->location, ((event*)detector_history->data)->location);
+						if ((fabs(ele_dir->x) < 0.0001) && (fabs(ele_dir->y) < 0.0001) && (fabs(ele_dir->z) < 0.0001)) {
+							// no actual movement of the electron from which to find a path
+							free(ele_dir);
 							ele_dir = NULL;
 						}
-						scatter* add_scatter;
-						if (ele_dir == NULL) {
-							
-							add_scatter = new_scatter(scatter_loc, NULL, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, TIME_UNCERT_CM);
-						} else {
-							// normalize the electron direction
-							vec3d* ele_dir_norm = vec_norm(ele_dir);
-							free(ele_dir);
-							add_scatter = new_scatter(scatter_loc, ele_dir_norm, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, TIME_UNCERT_CM);
-						}
-						scatter_truth* truth_info = (scatter_truth*)malloc(sizeof(scatter_truth));
-						truth_info->true_eng = cur_event->energy;
-						truth_info->true_time = cur_event->tof;
-						add_scatter->truth = truth_info;
+					} else {
+						ele_dir = NULL;
+					}
+					scatter* add_scatter;
+					if (ele_dir == NULL) {
+						
+						add_scatter = new_scatter(scatter_loc, NULL, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, TIME_UNCERT_CM);
+					} else {
+						// normalize the electron direction
+						vec3d* ele_dir_norm = vec_norm(ele_dir);
+						free(ele_dir);
+						add_scatter = new_scatter(scatter_loc, ele_dir_norm, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, TIME_UNCERT_CM);
+					}
+					scatter_truth* truth_info = (scatter_truth*)malloc(sizeof(scatter_truth));
+					truth_info->true_eng = cur_event->energy;
+					truth_info->true_time = cur_event->tof;
+					add_scatter->truth = truth_info;
 
-						// add random variation to the scatter location and time
-						double dist_var = 0.0;
-						double time_var = 0.0;
-						for (int i = 0; i < UNCERT_REP; i++) {
-							// creates a randomly distributed 
-							dist_var += drand48();
-							time_var += drand48();
-						}
-						dist_var -= UNCERT_REP / 2;
-						time_var -= UNCERT_REP / 2;
-						dist_var *= SPC_UNCERT;
-						time_var *= TIME_UNCERT_CM / SPD_LGHT;
-						// distance and time now have their variation size
-						double dist_theta = PI * drand48();
-						double dist_phi = 2 * PI * drand48();
-						// distance variation direction
-						double dist_x = dist_var * cos(dist_phi) * sin(dist_theta);
-						double dist_y = dist_var * sin(dist_phi) * cos(dist_theta);
-						double dist_z = dist_var * cos(dist_theta);
-						vec3d* dist_random = three_vec(dist_x, dist_y, dist_z);
-						vec3d* rand_loc = vec_add(add_scatter->loc, dist_random);
-						free(dist_random);
-						free(add_scatter->loc);
-						add_scatter->loc = rand_loc;
-						// distance variation set
-						add_scatter->time += time_var;
-						// done adding random variation
-
-
+					// add random variation to the scatter location and time
+					double dist_var = 0.0;
+					double time_var = 0.0;
+					double eng_var = 0.0;
+					for (int i = 0; i < UNCERT_REP; i++) {
+						// creates a randomly distributed value
+						dist_var += drand48();
+						time_var += drand48();
+						eng_var += drand48();
+					}
+					dist_var -= UNCERT_REP / 2;
+					time_var -= UNCERT_REP / 2;
+					eng_var -= UNCERT_REP / 2;
+					dist_var *= SPC_UNCERT;
+					time_var *= TIME_UNCERT_CM / SPD_LGHT;
+					// distance and time now have their variation size
+					double dist_theta = PI * drand48();
+					double dist_phi = 2 * PI * drand48();
+					// distance variation direction
+					double dist_x = dist_var * cos(dist_phi) * sin(dist_theta);
+					double dist_y = dist_var * sin(dist_phi) * cos(dist_theta);
+					double dist_z = dist_var * cos(dist_theta);
+					vec3d* dist_random = three_vec(dist_x, dist_y, dist_z);
+					vec3d* rand_loc = vec_add(add_scatter->loc, dist_random);
+					free(dist_random);
+					free(add_scatter->loc);
+					add_scatter->loc = rand_loc;
+					// distance variation set
+					add_scatter->time += time_var;
+					// done adding time randomness
+					add_scatter->deposit += (eng_var * add_scatter->eng_uncert);
+					// done adding energy randomness
+					// done adding random variation
+					if (add_scatter->deposit <= 0) {
+						// after energy randomness there can be negative energies
+						// if there is one delete the addition of this scatter
+						// and act as if no swichilator got flipped
+						delete_scatter(add_scatter); 
+					} else {
 						scatter_list = add_to_bottom(scatter_list, add_scatter);
 					}
-					// add the electron to the list of electrons we have checked
-					int* electron_id = (int*)malloc(sizeof(int));
-					*electron_id = ((event*)detector_history->data)->id;
-					checked_electrons = add_to_bottom(checked_electrons, electron_id);
 				}
+				// add the electron to the list of electrons we have checked
+				int* electron_id = (int*)malloc(sizeof(int));
+				*electron_id = ((event*)detector_history->data)->id;
+				checked_electrons = add_to_bottom(checked_electrons, electron_id);
 			}
 		}
 		detector_history = detector_history->down;
@@ -1946,9 +1985,14 @@ int find_annih_gamma(event* item) {
 		fprintf(stderr, "find_annih_gamma passed NULL pointer\n");
 		return 0;
 	}
-	if (item->orgin[0] == 'a') {
+	if (item->particle == 22) {
 		return item->id;
 	}
+	
+	// no longer works without origin data
+	// if (item->orgin[0] == 'a') {
+	// 	return item->id;
+	// }
 	return 0;
 }
 
@@ -2080,7 +2124,7 @@ int main(int argc, char **argv) {
 	uint table_total = 0;
 	// uint numerator = 0;
 	// uint denominator = 0;
-	uint hist_num = 0;
+	hist_num = 0;
 	first_scat_hypot = 0;
 	second_scat_hypot = 0;
 
