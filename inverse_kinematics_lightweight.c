@@ -150,6 +150,7 @@ scatter* new_scatter_old(vec3d* vector, double deposited, double time) {
 	new->eng_uncert = -1;
 	new->space_uncert = -1;
 	new->time_uncert = -1;
+	new->truth = NULL;
 	return new;
 }
 
@@ -295,7 +296,6 @@ llist* load_historyb(FILE* source, event* (*f)(FILE*)) {
 			// probably at EOF, in any case we need to be done
 			return NULL;
 		}
-	// } else {
 	}
 	history_num = previous_event->number;
 	while (history_num == previous_event->number) {
@@ -317,7 +317,7 @@ int scatter_dep_compare(void* va, void* vb) {
 	}
 	scatter* a = (scatter*)va;
 	scatter* b = (scatter*)vb;
-	if (a->deposit > b->deposit) {
+	if (a->deposit < b->deposit) {
 		return 1;
 	} else if (a->deposit == b->deposit) {
 		return 0;
@@ -334,7 +334,7 @@ int partition(void** array, int low, int high, int (*f)(void*, void*)) {
 	
 	int i = low - 1;
 	// the current best location for the pivot
-	for (int j = low; j < high - 1; j++) {
+	for (int j = low; j < high; j++) {
 		if (f(array[j], pivot) < 0) {
 			i++;
 			void** holding = array[j];
@@ -523,7 +523,7 @@ double expected_uncert_b(double b, double theta, double uncert_b, double uncert_
 	numerator = b + ((2. * 511.) / one_less_theta);
 	root = b * b + ((4. * 511. * b) / one_less_theta);
 	double first_term = numerator / sqrt(root);
-	double b_der = .5 * (first_term = 1.);
+	double b_der = .5 * (first_term + 1.);
 	uncert_b = uncert_b * b_der;
 
 	return add_quadrature(uncert_theta, uncert_b);
@@ -1042,7 +1042,7 @@ scatter** build_array_no_i(scatter** source, uint source_len, uint i) {
 	return result;
 }
 
-double recursive_search(double best, double current, double inc_eng, scatter* origin, scatter* loc, scatter** remaining, uint remain_count) {
+double recursive_search(double best, double current, double inc_eng, double inc_uncert, scatter* origin, scatter* loc, scatter** remaining, uint remain_count) {
 	if ((loc == NULL) || (remaining == NULL) || (origin == NULL) ||(remain_count == 0)) {
 		return current;
 	}
@@ -1062,15 +1062,20 @@ double recursive_search(double best, double current, double inc_eng, scatter* or
 
 	for (int i = 0; i < remain_count; i++) {
 		// first calcuate the probability of our current deviation
-		double expectation = expected_energy_b(origin, loc, remaining[i], &energy_uncert);
+		double prediction = expected_energy_b(origin, loc, remaining[i], &energy_uncert);
 		if (energy_uncert < 0) {
-			fprintf(stderr, "recursive_search: negative energy error found. Check given scatter errors\n");
+			fprintf(stderr, "recursive_search: negative energy error found (%lf). Check given scatter errors\n",energy_uncert);
+			// fprintf(stderr, "\terror thrown on history %i\n", hist_num);
 		}
-		double energy_error = (inc_eng - expectation) / energy_uncert; // error between
-		double new_energy = inc_eng - loc->deposit; // could maybe be the value
+		// calculate the combined error of the incoming energy and expectation
+		double comb_uncert = add_quadrature(inc_uncert, energy_uncert);
+		double energy_error = fabs(inc_eng - prediction) / comb_uncert; // error between
+		// double new_energy = inc_eng - loc->deposit; // could maybe be the value
 		// of expectation - loc->deposit
+		double new_energy = inc_eng - loc->deposit;
+		double new_eng_uncert = add_quadrature(inc_uncert, loc->eng_uncert);
 		// the a->b gamma prediction and the value from earlier in the chain
-		double step_error = add_quadrature(current, energy_error);
+		double step_error = energy_error;
 
 		// now find the error in electron direction plane
 		if (loc->dir != NULL) {
@@ -1095,13 +1100,15 @@ double recursive_search(double best, double current, double inc_eng, scatter* or
 		// done calcuating what the current paths uncertanty is, lets combine it
 		// with the current uncertanty to check if we are worse than the best
 		// solution so far.
-		double combined_error = add_quadrature(step_error, current);
+		// double combined_error = add_quadrature(step_error, current);
+		double combined_error = step_error + current;
 
 
-		if (step_error < best) {
+		if (step_error < best) { // probably an error, should be combined_error
+		// not a result issue, just a speed one, so leaving for now
 			// time to go one layer further
 			scatter** new_array = build_array_no_i(remaining, remain_count, i);
-			double below = recursive_search(best, combined_error, new_energy, loc, remaining[i], new_array, remain_count - 1);
+			double below = recursive_search(best, combined_error, new_energy, new_eng_uncert, loc, remaining[i], new_array, remain_count - 1);
 
 			free(new_array);
 			if (below < better_find) {
@@ -1160,6 +1167,14 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 
 	scatter_quicksort(scatters_near, 0, len_hist_near - 1);
 	scatter_quicksort(scatters_far, 0, len_hist_far - 1);
+	if (GENERAL_DEBUG) {
+		printf("multi_gamma_stat_iteration: scatters sorted:\n");
+		for (int i = 0; i < len_hist_near; i++) {
+			printf("\t%lf\n", scatters_near[i]->deposit);
+		}
+		printf("\n");
+	}
+
 	// sorts the scatters by deposit energy, now only keep the largest LARGEST
 	scatter** scatters_near_short = (scatter**)malloc(LARGEST * sizeof(scatter*));
 	scatter** scatters_far_short = (scatter**)malloc(LARGEST * sizeof(scatter*));
@@ -1191,7 +1206,7 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 
 		for (int i = 0; i < len_hist_far; i++) {
 
-			double try = recursive_search(best_find, 0., 511., scatters_far_short[i], scatters_near_short[j], new_array, len_hist_near - 1);
+			double try = recursive_search(best_find, 0., 511., 0., scatters_far_short[i], scatters_near_short[j], new_array, len_hist_near - 1);
 
 			if (try < best_find) {
 				best_scatter = scatters_near[j];
@@ -1335,15 +1350,18 @@ llist* build_scatters(llist* detector_history, int id) {
 					// add random variation to the scatter location and time
 					double dist_var = 0.0;
 					double time_var = 0.0;
+					double eng_var = 0.0;
 					for (int i = 0; i < UNCERT_REP; i++) {
 						// creates a randomly distributed value
 						dist_var += drand48();
 						time_var += drand48();
+						eng_var += drand48();
 					}
-					dist_var -= ((float)(UNCERT_REP) / 2.0);
-					time_var -= ((float)(UNCERT_REP) / 2.0);
+					dist_var -= ((float)(UNCERT_REP) * 0.5);
+					time_var -= ((float)(UNCERT_REP) * 0.5);
+					eng_var  -= ((float)(UNCERT_REP) * 0.5);
 					dist_var *= SPC_UNCERT;
-					time_var *= (TIME_UNCERT_CM / SPD_LGHT);
+					time_var *= TIME_UNCERT_CM / SPD_LGHT;
 					// distance and time now have their variation size
 					double dist_theta = PI * drand48();
 					double dist_phi = 2 * PI * drand48();
@@ -1354,15 +1372,22 @@ llist* build_scatters(llist* detector_history, int id) {
 					vec3d* dist_random = three_vec(dist_x, dist_y, dist_z);
 					vec3d* rand_loc = vec_add(add_scatter->loc, dist_random);
 					free(dist_random);
-					// free(rand_loc);
 					free(add_scatter->loc);
 					add_scatter->loc = rand_loc;
 					// distance variation set
 					add_scatter->time += time_var;
+					// done adding time randomness
+					add_scatter->deposit += (eng_var * add_scatter->eng_uncert);
+					// done adding energy randomness
 					// done adding random variation
-
-
-					scatter_list = add_to_bottom(scatter_list, add_scatter);
+					if (add_scatter->deposit <= 0) {
+						// after energy randomness there can be negative energies
+						// if there is one delete the addition of this scatter
+						// and act as if no swichilator got flipped
+						delete_scatter(add_scatter); 
+					} else {
+						scatter_list = add_to_bottom(scatter_list, add_scatter);
+					}
 				}
 				// add the electron to the list of electrons we have checked
 				int* electron_id = (int*)malloc(sizeof(int));
@@ -1739,8 +1764,11 @@ scatter** find_endpoints_stat(llist* detector_history, double sigma_per_scatter)
 	// run the actual finding of endpoint 1
 	scatter* endpoint1 = multi_gamma_stat_iteration(scat_list1, scat_list2, sigma_per_scatter);
 	// now do the same with endpoint 2
-	scatter* endpoint2 = multi_gamma_stat_iteration(scat_list2, scat_list1, sigma_per_scatter);
-
+	// only run if endpoint 1 found something good
+	scatter* endpoint2 = NULL;
+	if (endpoint1 != NULL) {
+		endpoint2 = multi_gamma_stat_iteration(scat_list2, scat_list1, sigma_per_scatter);
+	}
 
 	if ((endpoint1 == NULL) || (endpoint2 == NULL)) {
 		fmap(scat_list1, delete_scatter);
