@@ -434,7 +434,7 @@ vec3d* find_annihilation_point(llist *history) {
 		history = history->down;
 	}
 	// now at the last event, return the location as a 3-vector
-	return ((event*)(history->data))->location;
+	return vec_copy(((event*)(history->data))->location);
 }
 
 /*
