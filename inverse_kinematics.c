@@ -2141,7 +2141,7 @@ int main(int argc, char **argv) {
 		first_scat_hypot = 0;
 		second_scat_hypot = 0;
 		llist* curr_loc = list_head(history);
-		while (!part_id) {
+		while ((!part_id) && (curr_loc != NULL)) {
 			part_id = find_annih_gamma((event*)curr_loc->data);
 			curr_loc = curr_loc->down;
 		}
@@ -2151,7 +2151,7 @@ int main(int argc, char **argv) {
 		// find the second gamma 
 		if (scatters1 < 3) {
 			int previous = part_id;
-			while ((part_id == previous) || (!part_id)) {
+			while (((part_id == previous) || (!part_id)) && (curr_loc != NULL)) {
 				part_id = find_annih_gamma((event*)curr_loc->data);
 				curr_loc = curr_loc->down;
 			}
