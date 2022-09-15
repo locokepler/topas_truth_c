@@ -23,6 +23,9 @@
 #define READ_DEBUG 0
 #define GENERAL_DEBUG 0
 #define TREE_DEBUG 0
+#define GRAPHVIZ_DEBUG 0
+FILE* debug_graphs = NULL;
+uint graph_id;
 
 int alpha_n_1[FIRST_N];
 int alpha_n_2[FIRST_N];
@@ -1027,9 +1030,15 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 		if (TREE_DEBUG) {
 			printf("recursive_search: end of branch\n");
 		}
+		if (GRAPHVIZ_DEBUG) {
+			fprintf(debug_graphs, "%u;\n", graph_id);
+			fprintf(debug_graphs, "%u [label=\"end of check\"];\n", graph_id);
+			graph_id++;
+		}
 		if ((loc != NULL) && (path != NULL) && (loc->truth != NULL)) {
-			int* best_N_return = (int*)malloc(sizeof(int));
+			float* best_N_return = (float*)malloc(sizeof(float) * 2);
 			best_N_return[0] = loc->truth->true_n;
+			best_N_return[1] = loc->deposit;
 			path[0] = add_to_top(NULL, best_N_return);
 		}
 		return current;
@@ -1057,6 +1066,13 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 			printf("MISSING, ");
 		}
 		printf("best = %lf, current = %lf\n", best, current);
+	}
+	uint graph_label;
+	if (GRAPHVIZ_DEBUG && (loc->truth != NULL)) {
+		fprintf(debug_graphs, "%u;\n", graph_id);
+		fprintf(debug_graphs, "%u [label=\"N=%i\\nbest=%lf\\ncur=%lf\"];\n",graph_id, loc->truth->true_n,best,current);
+		graph_label = graph_id;
+		graph_id++;
 	}
 
 	double energy_uncert;
@@ -1111,6 +1127,13 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 		// solution so far.
 		// double combined_error = add_quadrature(step_error, current);
 		double combined_error = step_error + current;
+		uint part_graph_id;
+		if(GRAPHVIZ_DEBUG && (remaining[i]->truth != NULL)) {
+			fprintf(debug_graphs, "\t%u -> %u;\n", graph_label, graph_id);
+			fprintf(debug_graphs, "\t%u [label=\"N=%i\\ntry=%lf\"];\n", graph_id, remaining[i]->truth->true_n, combined_error);
+			part_graph_id = graph_id;
+			graph_id++;
+		}
 		if (TREE_DEBUG) {
 			printf("\tstep error: %lf, \tcombined error: %lf\n", step_error, combined_error);
 		}
@@ -1120,7 +1143,16 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 			// time to go one layer further
 			scatter** new_array = build_array_no_i(remaining, remain_count, i);
 			continuing_path = NULL;
+
+			if (GRAPHVIZ_DEBUG) {
+				fprintf(debug_graphs, "%u -> ", part_graph_id);
+			}
+
 			double below = recursive_search(best, combined_error, new_energy, new_eng_uncert, loc, remaining[i], new_array, remain_count - 1, &continuing_path);
+
+			// if (GRAPHVIZ_DEBUG) {
+			// 	fprintf(debug_graphs, "} %u -> {", graph_label);
+			// }
 
 			free(new_array);
 			if (below < better_find) {
@@ -1158,6 +1190,10 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 		}
 		path[0] = add_to_top(best_continuing_path, best_N_return);
 	}
+	// if (GRAPHVIZ_DEBUG) {
+	// 	fprintf(debug_graphs, "}");
+	// }
+
 	return better_find;
 }
 
@@ -1255,8 +1291,15 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 		for (int i = 0; i < len_hist_far; i++) {
 			llist* path = NULL;
 
-			double try = recursive_search(best_find, 0., 511., 0., scatters_far_short[i], scatters_near_short[j], new_array, len_hist_near - 1, &path);
+			if (GRAPHVIZ_DEBUG) {
+				fprintf(debug_graphs, "\n\ndigraph %u%i%i {\n", hist_num, i, j);
+				graph_id = 0;
+			}
 
+			double try = recursive_search(best_find, 0., 511., 0., scatters_far_short[i], scatters_near_short[j], new_array, len_hist_near - 1, &path);
+			if (GRAPHVIZ_DEBUG) {
+				fprintf(debug_graphs, "}\n");
+			}
 			if (try < best_find) {
 				best_scatter = scatters_near[j];
 				best_find = try;
@@ -2093,6 +2136,13 @@ int main(int argc, char **argv) {
 	if ((out_in_patient == NULL) || (lor_output == NULL) || (eng_output == NULL)) {
 		printf("Unable to open output file for writing\n");
 		return 1;
+	}
+
+	if (GRAPHVIZ_DEBUG) {
+		char* graph_file_name = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
+		strcpy(graph_file_name, argv[3]);
+		graph_file_name = strncat(graph_file_name, ".dot", strlen(argv[3] + 9));
+		debug_graphs = fopen(graph_file_name, "w");
 	}
 
 	double in_patient_distance = strtod(argv[4], NULL);
