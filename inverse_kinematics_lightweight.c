@@ -19,6 +19,7 @@
 #define LARGEST 10
 #define SKIP 0
 #define KEEP_SINGLES 1
+#define MAX_SINGLE_SIGMA 3.0
 
 #define TIME_UNCERT_CM 1.
 #define SPC_UNCERT 0.1
@@ -1104,7 +1105,7 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 		double combined_error = step_error + current;
 
 
-		if (step_error < best) { // probably an error, should be combined_error
+		if ((combined_error < best) && (step_error < MAX_SINGLE_SIGMA)) { // probably an error, should be combined_error
 		// not a result issue, just a speed one, so leaving for now
 			// time to go one layer further
 			scatter** new_array = build_array_no_i(remaining, remain_count, i);
@@ -1120,6 +1121,9 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 		}
 	}
 	free(in);
+	if (better_find == INFINITY) {
+		better_find = best;
+	}
 	return better_find;
 }
 

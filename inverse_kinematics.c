@@ -15,6 +15,7 @@
 #define FIRST_N 5
 #define LARGEST 10
 #define SKIP 0
+#define MAX_SINGLE_SIGMA 3.0
 
 #define TIME_UNCERT_CM 5.
 #define SPC_UNCERT 0.5
@@ -1139,7 +1140,7 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 		}
 
 
-		if (combined_error < best) {
+		if ((combined_error < best) && (step_error < MAX_SINGLE_SIGMA)) {
 			// time to go one layer further
 			scatter** new_array = build_array_no_i(remaining, remain_count, i);
 			continuing_path = NULL;
@@ -1181,9 +1182,11 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 	// }
 	if (path != NULL) {
 		float* best_N_return = (float*)malloc(sizeof(float) * 2);
-		if (loc->truth != NULL) {
-			best_N_return[0] = loc->truth->true_n;
-			best_N_return[1] = loc->deposit;
+		// this seems like it should be loc->truth
+		// however, the list is misbehaving for the first call
+		if (origin->truth != NULL) {
+			best_N_return[0] = origin->truth->true_n;
+			best_N_return[1] = origin->deposit;
 		} else {
 			best_N_return[0] = -1;
 			best_N_return[1] = -1;
@@ -1193,6 +1196,9 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 	// if (GRAPHVIZ_DEBUG) {
 	// 	fprintf(debug_graphs, "}");
 	// }
+	if (better_find == INFINITY) {
+		better_find = best;
+	}
 
 	return better_find;
 }
