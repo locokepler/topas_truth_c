@@ -21,7 +21,7 @@
 #define KEEP_SINGLES 1
 #define MAX_SINGLE_SIGMA 3.0
 
-#define TIME_UNCERT_CM 1.
+#define TIME_UNCERT_CM 4.33
 #define SPC_UNCERT 0.1
 #define UNCERT_REP 12
 
