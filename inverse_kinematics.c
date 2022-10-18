@@ -16,9 +16,10 @@
 #define LARGEST 10
 #define SKIP 0
 #define MAX_SINGLE_SIGMA 3.0
+#define MIN_SCAT_ENG 10.0
 
 #define TIME_UNCERT_CM 5.
-#define SPC_UNCERT 0.5
+#define SPC_UNCERT 0.05
 #define UNCERT_REP 12
 
 #define READ_DEBUG 0
@@ -27,6 +28,10 @@
 #define GRAPHVIZ_DEBUG 0
 FILE* debug_graphs = NULL;
 uint graph_id;
+#define LOR_GROUP 0 // iff 1 outputs gold, silver, and lead files
+
+//OUTDATED if 0 output all found lors, 1 only with both T=R=1, 2 
+// only R!=T=1 for only 1, 3 only R!=T=1 for both 
 
 int alpha_n_1[FIRST_N];
 int alpha_n_2[FIRST_N];
@@ -35,6 +40,9 @@ float alpha_eng_distro_n_2[FIRST_N];
 float n_eng_distro_n_1[FIRST_N];
 float n_eng_distro_n_2[FIRST_N];
 uint hist_num;
+uint total_scatters = 0;
+uint path_scatters = 0;
+
 
   
 // reads a line from the source file as an event
@@ -1186,7 +1194,7 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 		// however, the list is misbehaving for the first call
 		if (origin->truth != NULL) {
 			best_N_return[0] = origin->truth->true_n;
-			best_N_return[1] = origin->deposit;
+			best_N_return[1] = origin->truth->true_eng;
 		} else {
 			best_N_return[0] = -1;
 			best_N_return[1] = -1;
@@ -1467,7 +1475,9 @@ llist* build_scatters(llist* detector_history, int id) {
 						vec3d* ele_dir_norm = vec_norm(ele_dir);
 						free(ele_dir);
 						add_scatter = new_scatter(scatter_loc, ele_dir_norm, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, TIME_UNCERT_CM);
+						path_scatters++;
 					}
+					total_scatters++;
 					scatter_truth* truth_info = (scatter_truth*)malloc(sizeof(scatter_truth));
 					truth_info->true_eng = cur_event->energy;
 					truth_info->true_time = cur_event->tof;
@@ -1506,7 +1516,7 @@ llist* build_scatters(llist* detector_history, int id) {
 					add_scatter->deposit += (eng_var * add_scatter->eng_uncert);
 					// done adding energy randomness
 					// done adding random variation
-					if (add_scatter->deposit <= 0) {
+					if (add_scatter->deposit <= MIN_SCAT_ENG) {
 						// after energy randomness there can be negative energies
 						// if there is one delete the addition of this scatter
 						// and act as if no swichilator got flipped
@@ -2127,18 +2137,45 @@ int main(int argc, char **argv) {
 	char* debug_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
 	char* lor_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
 	char* eng_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
+	char* gold_file;
+	char* silver_file;
+	char* lead_file;
+	if (LOR_GROUP) {
+		gold_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
+		silver_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
+		lead_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
+	}
 
 	strcpy(debug_file, argv[3]);
 	strcpy(lor_file, argv[3]);
 	strcpy(eng_file, argv[3]);
+	if (LOR_GROUP) {
+		strcpy(gold_file, argv[3]);
+		strcpy(silver_file, argv[3]);
+		strcpy(lead_file, argv[3]);
+	}
 
 	debug_file = strcat(debug_file, ".debug");
 	lor_file = strcat(lor_file, ".lor");
 	eng_file = strcat(eng_file, ".eng");
+	if (LOR_GROUP) {
+		gold_file = strcat(gold_file, ".gold");
+		silver_file = strcat(silver_file, ".silver");
+		lead_file = strcat(lead_file, ".lead");
+	}
+	
 
 	FILE* out_in_patient = fopen(debug_file, "w");
 	FILE* lor_output = fopen(lor_file, "w");
 	FILE* eng_output = fopen(eng_file, "w");
+	FILE* gold_out;
+	FILE* silver_out;
+	FILE* lead_out;
+	if (LOR_GROUP) {
+		gold_out = fopen(gold_file, "w");
+		silver_out = fopen(silver_file, "w");
+		lead_out = fopen(lead_file, "w");
+	}
 	if ((out_in_patient == NULL) || (lor_output == NULL) || (eng_output == NULL)) {
 		printf("Unable to open output file for writing\n");
 		return 1;
@@ -2157,6 +2194,7 @@ int main(int argc, char **argv) {
 	energy_cutoff = strtod(argv[6], NULL);
 	if ((in_patient_distance <= 0) || (energy_cutoff <= 0)) {
 		printf("Size and energy dimensions must be greater than zero\n");
+		printf("detector_rad = %lf\nsigma per scatter = %lf\n",in_patient_distance, energy_cutoff);
 		return 1;
 	}
 	if (detector_height > 0) {
@@ -2205,21 +2243,19 @@ int main(int argc, char **argv) {
 		int scatters1 = in_patient(history, in_patient_distance, detector_height, part_id);
 		in_patient_occurance = in_patient_occurance || scatters1;
 		// find the second gamma 
-		if (scatters1 < 3) {
-			int previous = part_id;
-			while (((part_id == previous) || (!part_id)) && (curr_loc != NULL)) {
-				part_id = find_annih_gamma((event*)curr_loc->data);
-				curr_loc = curr_loc->down;
-			}
-			// does the second annhilation gamma scatter, and how much
-			int scatters2 = in_patient(history, in_patient_distance, detector_height, part_id);
-			in_patient_occurance = in_patient_occurance || scatters2;
+		int previous = part_id;
+		while (((part_id == previous) || (!part_id)) && (curr_loc != NULL)) {
+			part_id = find_annih_gamma((event*)curr_loc->data);
+			curr_loc = curr_loc->down;
+		}
+		// does the second annhilation gamma scatter, and how much
+		int scatters2 = in_patient(history, in_patient_distance, detector_height, part_id);
+		in_patient_occurance = in_patient_occurance || scatters2;
 
-			if ((scatters1 < 3) && (scatters2 < 3)) {
-				// add one to the table of fates if not beyond measurements
-				table[scatters1][scatters2]++;
-				table_total++;
-			}
+		if ((scatters1 < 3) && (scatters2 < 3)) {
+			// add one to the table of fates if not beyond measurements
+			table[scatters1][scatters2]++;
+			table_total++;
 		}
 		// fmap(history, print_event);
 		if (in_patient_occurance && run_in_patient) {
@@ -2252,9 +2288,36 @@ int main(int argc, char **argv) {
 			} else {
 				// create the LOR
 				lor* result = create_lor(endpoints[0], endpoints[1]);
-				fprintf(lor_output, "%i, ", ((event*)(history->data))->number);
-				print_lor(lor_output, result);
-				fprintf(lor_output, "\n");
+
+				// add the in patient scatters to the number T value for scatters
+				for (int i = 0; i < FIRST_N; i++) {
+					if (alpha_n_1[i] > 0) {
+						alpha_n_1[i] += scatters1;
+					}
+					if (alpha_n_2[i] > 0) {
+						alpha_n_2[i] += scatters2;
+					}
+				}
+
+				if (!LOR_GROUP) {
+					fprintf(lor_output, "%i, ", ((event*)(history->data))->number);
+					print_lor(lor_output, result);
+					fprintf(lor_output, "\n");
+				} else {
+					if ((alpha_n_1[0] == 1) && (alpha_n_2[0] == 1)) {
+						fprintf(gold_out, "%i, ", ((event*)(history->data))->number);
+						print_lor(gold_out, result);
+						fprintf(gold_out, "\n");
+					} else if ((alpha_n_1[0] != 1) != (alpha_n_2[0] != 1)) {
+						fprintf(silver_out, "%i, ", ((event*)(history->data))->number);
+						print_lor(silver_out, result);
+						fprintf(silver_out, "\n");
+					} else if ((alpha_n_1[0] != 1) && (alpha_n_2[0] != 1)) {
+						fprintf(lead_out, "%i, ", ((event*)(history->data))->number);
+						print_lor(lead_out, result);
+						fprintf(lead_out, "\n");
+					}
+				}
 
 				// now we need to find the distance by which the endpoints miss
 				vec3d* annh_loc = find_annihilation_point(history);
@@ -2352,6 +2415,9 @@ int main(int argc, char **argv) {
 		}
 		printf("\n");
 	}
+
+	printf("\n\nTotal scatters: %u\nElectron path scatters%u\n",total_scatters,path_scatters);
+	printf("Percentage with path: %lf\n", ((double)path_scatters/(double)total_scatters));
 
 
 	fclose(in_histories);
