@@ -4,6 +4,6 @@
 
 
 int main(int argc, char **argv) {
-    full_tests();
+    geometry_full_tests();
     return 0;
 }

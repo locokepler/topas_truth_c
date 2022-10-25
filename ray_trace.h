@@ -67,7 +67,10 @@ void* geometry_free(geometry* a);
 double propagate(ray* path_src, geometry* all);
 
 // the full suite of tests for ray tracing
-int full_tests();
+int geometry_full_tests();
+
+// prints a given geometry
+void print_geometry(FILE* output, geometry* a);
 
 
 #endif

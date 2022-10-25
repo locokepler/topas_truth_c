@@ -853,11 +853,36 @@ int test_cyl_1() {
 
 
 // the full suite of tests for ray tracing
-int full_tests() {
+int geometry_full_tests() {
     int num_of_tests = 3;
     int a = test_prism_1();
     a += test_sphere_1();
     a += test_cyl_1();
     printf("ray tracing passed %i out of %i tests\n", a, num_of_tests);
     return (a == num_of_tests);
+}
+
+void print_geometry(FILE* output, geometry* a) {
+    uint i = a->size;
+    fprintf(output, "%u shapes in geometry\n",i);
+    for (uint j = 0; j < i; j++) {
+        shape* cur = a->geo[j];
+        fprintf(output, "\tShape type: ");
+        if (cur->type == REC_PRISM) {
+            fprintf(output, "rectangular prism\n");
+            fprintf(output, "\t\tlx = %f, ly = %f, lz = %f\n", cur->dim[0],cur->dim[1],cur->dim[2]);
+        } else if (cur->type == CYLINDER) {
+            fprintf(output, "cylinder\n");
+            fprintf(output, "\t\theight = %f, radius = %f\n", cur->dim[1], cur->dim[0]);
+            char axis_array[4] = {'\0', 'x', 'y', 'z'};
+            fprintf(output, "\t\tmain axis of shape: %c\n", axis_array[cur->axis]);
+        } else if (cur->type == SPHERE) {
+            fprintf(output, "sphere\n");
+            fprintf(output, "\t\tradius = %lf\n", cur->dim[0]);
+        } else {
+            fprintf(output, "UNKNOWN SHAPE ERROR!\n");
+        }
+        fprintf(output, "\t\tx = %f,  y = %f,  z = %f\n", cur->pos[0],cur->pos[1],cur->pos[2]);
+        fprintf(output, "\t\tattenuation: %f\n", cur->atten);
+    }
 }

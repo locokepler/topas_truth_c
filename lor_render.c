@@ -509,6 +509,9 @@ void add_lor(render* universe, lor* lor) {
 	if (universe == NULL || lor == NULL) {
 		return;
 	}
+	// get the attenuation correction value
+	double attenuation = atten_correction(lor);
+
 	// print_lor(stdout, lor);
 	// printf("\n");
 	// first define the volume in which we will be operating
@@ -570,7 +573,7 @@ void add_lor(render* universe, lor* lor) {
 					double trans_deviation = transverse / lor->transverse_uncert;
 					double lon_normal = long_func(lor->long_uncert, lon_deviation);
 					double trans_normal = centered_normal(lor->transverse_uncert, trans_deviation);
-					double total_value = lon_normal * trans_normal;
+					double total_value = lon_normal * trans_normal * attenuation;
 
 					int index[3] = {i,j,k};
 
@@ -911,6 +914,9 @@ int main(int argc, char const *argv[])
 					}
 					if (objects == NULL) {
 						fprintf(stderr, "WARN: unable to load geometry\n");
+					} else {
+						geometry_full_tests();
+						print_geometry(stdout, objects);
 					}
 				} else {
 					printf("put -g flag before path to geometry file\n");
