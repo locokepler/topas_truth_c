@@ -12,13 +12,13 @@ containement: brightest_scatters.o llist.o vector_ops.o
 	$(CC) -o containment/contained brightest_scatters.o llist.o vector_ops.o $(CFLAGS)
 
 reverse_kin: inverse_kinematics.o llist.o vector_ops.o
-	$(CC) -o reverse_kinimatics $^ $(CFLAGS)
+	$(CC) -o reverse_kinematics $^ $(CFLAGS)
 
 event_view: output_scatter_sets.o llist.o vector_ops.o
 	$(CC) -o event_viewer $^ $(CFLAGS)
 
 debug_reverse_kin: inverse_kinematics.c llist.c vector_ops.c
-	$(CC) -o debug_reverse_kinimatics $^ -Wall -lm -g
+	$(CC) -o debug_reverse_kinematics $^ -Wall -lm -g
 
 render: lor_render.o vector_ops.o ray_trace.o llist.o
 	$(CC) -o renderer $^ $(CFLAGS)
