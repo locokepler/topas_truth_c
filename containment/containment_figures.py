@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
+import matplotlib.ticker
 from matplotlib.ticker import (MaxNLocator, MultipleLocator, AutoMinorLocator)
 
 def plot_prettier(dpi=200, fontsize=17):
@@ -27,7 +28,10 @@ def add_minor_ticks(plot, ticks, bot=True, tp=True, lft=True, rght=True):
 		plot.yaxis.set_minor_locator((AutoMinorLocator(int(ticks))))
 
 # full_data = np.loadtxt("containment/30_cm_0_deg_10mil", delimiter=',')
-full_data = np.loadtxt("containment/30_cm_0_deg", delimiter=',')
+# full_data = np.loadtxt("containment/30_cm_0_deg", delimiter=',')
+# full_data = np.loadtxt("containment/thick_0deg.tuple", delimiter=',')
+# full_data = np.loadtxt("containment/30_cm_0_deg_10mil_LAB.tuple", delimiter=',')
+full_data = np.loadtxt("containment/very_thick_head_on_10mil.tuple", delimiter=',')
 relevent = full_data[:,1]
 rel_energy = full_data[:,2]
 one_scatters = full_data[full_data[:,1] == 1]
@@ -147,6 +151,8 @@ ay.errorbar(bins2[:-1], escp_eng, yerr=escp_eng_err, marker='s', label = 'all ga
 # az.plot(bins2[:-1], hist2less3, 'ok', mfc='none')
 # aw.plot(brightbin[:-1], brightest, 'dk', label = 'highest energy scatter')
 aw.errorbar(brightbin[:-1], brightest, yerr=brightest_err, marker='D', linestyle="None", label = 'highest energy scatter')
+print('brightest scatters:')
+print(brightest)
 
 # an.plot(eng_bright_bin[:-1], eng_bright, '-k', label = 'scatter energy')
 an.errorbar(eng_bright_bin[:-1], eng_bright, yerr=eng_bright_err, marker='D', label = 'scatter energy')
@@ -284,13 +290,15 @@ plt.tick_params(bottom=True, top=True, left=True, right=True)
 # plt.tick_params(which = 'minor',bottom=False, top=False, left=False, right=False)
 # plt.colorbar(im)
 # plt.show()
-fig_ax.savefig('scatters_before_escape_v3')
-fig_ay.savefig('energy_at_escape_v2')
-fig_aw.savefig('scatter_with_highest_energy_v2')
-fig_an.savefig('energy_of_brightest_v1')
-fig_scat_dist.savefig('scatter_dist_v1')
-fig_compt_2d.savefig('compton_snake_v1')
-fig_compt_slice.savefig('compton_slice_v1')
+version = "3"
+subversion = "c"
+fig_ax.savefig('containment_figures/scatters_before_escape_v' + version + subversion)
+fig_ay.savefig('containment_figures/energy_at_escape_v' + version + subversion)
+fig_aw.savefig('containment_figures/scatter_with_highest_energy_v' + version + subversion)
+fig_an.savefig('containment_figures/energy_of_brightest_v' + version + subversion)
+fig_scat_dist.savefig('containment_figures/scatter_dist_v' + version + subversion)
+fig_compt_2d.savefig('containment_figures/compton_snake_v' + version + subversion)
+fig_compt_slice.savefig('containment_figures/compton_slice_v' + version + subversion)
 
 
 # x[x >= 0]
