@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include "vector_ops.h"
 
-#define ENG_RNG 0.01
+#define ENG_RNG 0.001
 #define COMP_INT 1667457891
 
 /*
@@ -30,20 +30,20 @@ event* read_line(FILE* source) {
 	double z;
 	double tof;
 	int particle;
-	char origin[20];
+	// char origin[20];
 	int count;
 
 	int worked;
 
-	fscanf(source, "%u", &numb);
-	fscanf(source, "%lf", &energy);
-	fscanf(source, "%lf", &deposit);
-	fscanf(source, "%lf", &x);
-	fscanf(source, "%lf", &y);
-	fscanf(source, "%lf", &z);
-	fscanf(source, "%lf", &tof);
-	fscanf(source, "%i", &particle);
-	fscanf(source, "%s", origin);
+	worked = fscanf(source, "%u", &numb);
+	worked = fscanf(source, "%lf", &energy);
+	worked = fscanf(source, "%lf", &deposit);
+	worked = fscanf(source, "%lf", &x);
+	worked = fscanf(source, "%lf", &y);
+	worked = fscanf(source, "%lf", &z);
+	worked = fscanf(source, "%lf", &tof);
+	worked = fscanf(source, "%i", &particle);
+	// worked = fscanf(source, "%s", origin);
 	worked = fscanf(source, "%i", &count);
 
 	if (worked == EOF) {
@@ -57,21 +57,38 @@ event* read_line(FILE* source) {
 	}
 	new_event->number 		= numb;
 	new_event->energy 		= energy;
-	new_event->depoisted 	= deposit;
+	new_event->deposited 	= deposit;
 	new_event->location 	= three_vec(x,y,z);
 	new_event->tof 			= tof;
 	new_event->particle 	= particle;
-	strcpy(new_event->orgin, origin);
+	// strcpy(new_event->orgin, origin);
 	new_event->id		= count;
+	new_event->orgin[0]		= (char)0;
+
+
+	// if (READ_DEBUG) {
+	// 	print_event((void*)new_event);
+	// }
 
 	return new_event;
 }
 
 // frees event malloc, returns NULL. For fmap
 void* delete_event(void* in) {
-	event *val = (event*)in;
-	free(val->location);
-	free(val);
+	if (in == NULL) {
+		return NULL;
+	}
+	free(((event*)in)->location); // frees the allocated vector
+	free(in);
+	return NULL;
+}
+
+// just free with a return value of NULL for fmap
+void* free_null(void* in) {
+	if (in == NULL) {
+		return NULL;
+	}
+	free(in);
 	return NULL;
 }
 
@@ -93,15 +110,14 @@ llist* load_history(FILE* source, event* (*f)(FILE*)) {
 	uint history_num;
 	llist* history = NULL;
 	if (previous_event == NULL) {
-		history_num = 0;
+		// history_num = 0;
 		previous_event = f(source);
 		if (previous_event == NULL) {
 			// probably at EOF, in any case we need to be done
 			return NULL;
 		}
-	} else {
-		history_num = previous_event->number;
 	}
+	history_num = previous_event->number;
 	while (history_num == previous_event->number) {
 		history = add_to_bottom(history, previous_event);
 		previous_event = f(source);
@@ -110,6 +126,10 @@ llist* load_history(FILE* source, event* (*f)(FILE*)) {
 			return history;
 		}
 	}
+	// make a new copy of the event in previous event for storing
+	// means it will continue pointing right as otherwise it can
+	// point to the history that got freed
+	previous_event = duplicate_event(previous_event);
 	return history;
 }
 
@@ -134,9 +154,9 @@ int is_contained(llist* history) {
 	while (history != NULL) {
 		event* current_event = (event*)history->data;
 		if (current_event->particle == 11) {
-			if ((current_event->orgin[0] == 'p') && (current_event->orgin[1] == 'h')) {
-				return 1;
-			}
+			// if ((current_event->orgin[0] == 'p') && (current_event->orgin[1] == 'h')) {
+			return 1;
+			// }
 		}
 		history = history->down;
 	}
