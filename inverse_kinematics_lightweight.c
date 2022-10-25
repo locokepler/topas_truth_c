@@ -20,9 +20,14 @@
 #define SKIP 0
 #define KEEP_SINGLES 1
 #define MAX_SINGLE_SIGMA 3.0
+#define MIN_SCAT_ENG 10.0 // minumum energy for a scatter to be observed
+#define E_TRIGGER 20.0 // energy in keV to hit trigger 
+#define PHI_MODULES 12 // modules for trigger
+#define MODULE_SEPERATION 3 // min number of modules separation for trigger
+#define NEVER_CUT 0
 
 #define TIME_UNCERT_CM 4.33
-#define SPC_UNCERT 0.1
+#define SPC_UNCERT 0.01
 #define UNCERT_REP 12
 
 
@@ -374,6 +379,82 @@ int double_equality(double a, double b, double range) {
 		return 1;
 	}
 	return 0;
+}
+
+/*
+ * vec_to_phi
+ * Takes a vector and returns the angle in phi as a double. Dead simple for use
+ * by the trigger
+ * Returns the angle in radians (from 0 to 2*pi), or an error value of -1
+ */
+double vec_to_phi(vec3d* a) {
+	if (a == NULL) {
+		return -1;
+	} else if ((a->x == 0.0) && (a->y == 0.0)) {
+		// cannot find phi as we are on the z axis, it is undefined. Return error
+		return -1;
+	}
+	double angle = atan2(a->y,a->x);
+	if (angle < 0) {
+		angle += 2 * PI;
+	}
+	return angle;
+}
+
+int test_vec_to_phi() {
+	vec3d case_a;
+	vec3d case_b;
+	vec3d case_c;
+	int success = 0;
+	case_a.x = 2.0;
+	case_a.y = 0.0;
+	double result = vec_to_phi(&case_a);
+	int run = double_equality(0.0, result, 0.0001);
+	if (run != 1) {
+		fprintf(stderr, "test_vec_to_phi: expected 0.0, got %lf\n",result);
+	}
+	success += run;
+	case_b.x = 0.0;
+	case_b.y = 1.5;
+	result = vec_to_phi(&case_b);
+	run = double_equality(PI * 0.5, result, 0.0001);
+	if (run != 1) {
+		fprintf(stderr, "test_vec_to_phi: expected pi/2, got %lf\n",result);
+	}
+	success += run;
+	case_c.x = 1.0;
+	case_c.y = -1.0;
+	result = vec_to_phi(&case_c);
+	run = double_equality(PI * 1.75, result, 0.0001);
+	if (run != 1) {
+		fprintf(stderr, "test_vec_to_phi: expected 5pi/4, got %lf\n",result);
+	}
+	success += run;
+	if (success != 3) {
+		fprintf(stderr, "test_vec_to_phi: tests failed.\n");
+	}
+	return success;
+}
+
+/*
+ * phi_trigger:
+ * Takes a scatter and the number of modules in phi that the detector has and
+ * returns which module the scatter triggered. If it failed to trigger a module
+ * 0 is returned. Otherwise, the number of the module as a binned value is
+ * returned with 1 as the first module and the highest number of modules as the
+ * final one.
+ */
+int phi_trigger(scatter* a, uint modules) {
+	if (a == NULL || a->loc == NULL) {
+		return 0; // no trigger, but also lets not break anything
+	}
+	if (a->deposit < E_TRIGGER) {
+		return 0;
+	}
+	double phi = vec_to_phi(a->loc);
+	double segment = phi * (1.0 / (2 * PI)) * modules;
+	int final = ((int)segment) + 1;
+	return final;
 }
 
 /* 
@@ -1052,7 +1133,7 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 		return current;
 	}
 
-	double OUT_OF_PLANE_WEIGHT = 2.; // how many sigma a 90 deg out of plane
+	double OUT_OF_PLANE_WEIGHT = 0.; // how many sigma a 90 deg out of plane
 	// scatter counts for 
 
 	double energy_uncert;
@@ -1154,6 +1235,27 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 		// idk if it is possible to even get here, but we can't continue if we do
 		return NULL;
 	}
+	// lets check the trigger: The two scatter lists must trigger at least two
+	// different modules in phi
+	int near_module = 0;
+	llist* location = list_tail(history_near);
+	while ((near_module == 0) && (location != NULL) && (location->data != NULL)) {
+		near_module = phi_trigger((scatter*)(location->data), PHI_MODULES);
+		location = location->up;
+	}
+	location = history_far;
+	int far_module = 0;
+	while ((far_module == 0) && (location != NULL) && (location->data != NULL)) {
+		int temp = phi_trigger((scatter*)(location->data), PHI_MODULES);
+		if ((abs(temp - near_module) > MODULE_SEPERATION) && (abs(temp - near_module) < (PHI_MODULES - MODULE_SEPERATION))) {
+			far_module = temp;
+		}
+		location = location->down;
+	}
+	if (far_module == 0) {
+		return NULL;
+	}
+
 	llist* hist_near_bottom = list_tail(history_near);
 	// time to turn the scattering list into an array for fast access
 	scatter** scatters_near = (scatter**)malloc(len_hist_near * sizeof(scatter*));
@@ -1384,7 +1486,7 @@ llist* build_scatters(llist* detector_history, int id) {
 					add_scatter->deposit += (eng_var * add_scatter->eng_uncert);
 					// done adding energy randomness
 					// done adding random variation
-					if (add_scatter->deposit <= 0) {
+					if (add_scatter->deposit <= MIN_SCAT_ENG) {
 						// after energy randomness there can be negative energies
 						// if there is one delete the addition of this scatter
 						// and act as if no swichilator got flipped
@@ -1773,6 +1875,18 @@ scatter** find_endpoints_stat(llist* detector_history, double sigma_per_scatter)
 	if (endpoint1 != NULL) {
 		endpoint2 = multi_gamma_stat_iteration(scat_list2, scat_list1, sigma_per_scatter);
 	}
+
+	// if we failed just give the highest energy scatter. Leads to far more bad
+	// solutions but also doesn't leave anything on the table.
+	if (NEVER_CUT) {
+		if ((endpoint1 == NULL) && (scat_list1->data != NULL)) {
+			endpoint1 = scat_list1->data;
+		}
+		if ((endpoint2 == NULL) && (scat_list2->data != NULL)) {
+			endpoint2 = scat_list2->data;
+		}
+	}
+
 
 	if ((endpoint1 == NULL) || (endpoint2 == NULL)) {
 		fmap(scat_list1, delete_scatter);
