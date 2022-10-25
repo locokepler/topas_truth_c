@@ -2129,7 +2129,7 @@ int main(int argc, char **argv) {
 
 	energy_cutoff = strtod(argv[3], NULL);
 
-	if (!test_expected_energy()) {
+	if ((!test_expected_energy()) || (test_vec_to_phi() != 3)) {
 		fprintf(stderr, "tests failed, exiting\n");
 		return 1;
 	}
