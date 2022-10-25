@@ -11,12 +11,16 @@
 #define COMP_INT 1667457891
 #define ELECTRON_MASS 510.999
 #define SPD_LGHT 29.98
-#define PI 3.1415
+#define PI 3.141592653589
 #define FIRST_N 5
-#define LARGEST 10
-#define SKIP 0
-#define MAX_SINGLE_SIGMA 3.0
-#define MIN_SCAT_ENG 10.0
+#define LARGEST 100 // max scatters in a tree
+#define SKIP 0 // number of scatters to skip at end of tree
+#define MAX_SINGLE_SIGMA 3.0 // max sigma for a scatter to be accepted as possible
+#define MIN_SCAT_ENG 10.0 // minumum energy for a scatter to be observed
+#define E_TRIGGER 20.0 // energy in keV to hit trigger 
+#define PHI_MODULES 12 // modules for trigger
+#define MODULE_SEPERATION 3 // min number of modules separation for trigger
+#define NEVER_CUT 0
 
 #define TIME_UNCERT_CM 5.
 #define SPC_UNCERT 0.05
@@ -28,7 +32,8 @@
 #define GRAPHVIZ_DEBUG 0
 FILE* debug_graphs = NULL;
 uint graph_id;
-#define LOR_GROUP 0 // iff 1 outputs gold, silver, and lead files
+#define LOR_GROUP 1 // iff 1 outputs gold, silver, and lead files
+#define CUT_IPS 1 // do not output to Au/Ag/Pb files if an IPS happened
 
 //OUTDATED if 0 output all found lors, 1 only with both T=R=1, 2 
 // only R!=T=1 for only 1, 3 only R!=T=1 for both 
@@ -42,6 +47,7 @@ float n_eng_distro_n_2[FIRST_N];
 uint hist_num;
 uint total_scatters = 0;
 uint path_scatters = 0;
+unsigned long long possible_branches = 0;
 
 
   
@@ -340,6 +346,101 @@ int double_equality(double a, double b, double range) {
 		return 1;
 	}
 	return 0;
+}
+
+/*
+ * vec_to_phi
+ * Takes a vector and returns the angle in phi as a double. Dead simple for use
+ * by the trigger
+ * Returns the angle in radians (from 0 to 2*pi), or an error value of -1
+ */
+double vec_to_phi(vec3d* a) {
+	if (a == NULL) {
+		return -1;
+	} else if ((a->x == 0.0) && (a->y == 0.0)) {
+		// cannot find phi as we are on the z axis, it is undefined. Return error
+		return -1;
+	}
+	double angle = atan2(a->y,a->x);
+	if (angle < 0) {
+		angle += 2 * PI;
+	}
+	return angle;
+}
+
+int test_vec_to_phi() {
+	vec3d case_a;
+	vec3d case_b;
+	vec3d case_c;
+	int success = 0;
+	case_a.x = 2.0;
+	case_a.y = 0.0;
+	double result = vec_to_phi(&case_a);
+	int run = double_equality(0.0, result, 0.0001);
+	if (run != 1) {
+		fprintf(stderr, "test_vec_to_phi: expected 0.0, got %lf\n",result);
+	}
+	success += run;
+	case_b.x = 0.0;
+	case_b.y = 1.5;
+	result = vec_to_phi(&case_b);
+	run = double_equality(PI * 0.5, result, 0.0001);
+	if (run != 1) {
+		fprintf(stderr, "test_vec_to_phi: expected pi/2, got %lf\n",result);
+	}
+	success += run;
+	case_c.x = 1.0;
+	case_c.y = -1.0;
+	result = vec_to_phi(&case_c);
+	run = double_equality(PI * 1.75, result, 0.0001);
+	if (run != 1) {
+		fprintf(stderr, "test_vec_to_phi: expected 5pi/4, got %lf\n",result);
+	}
+	success += run;
+	if (success != 3) {
+		fprintf(stderr, "test_vec_to_phi: tests failed.\n");
+	}
+	return success;
+}
+
+/*
+ * phi_trigger:
+ * Takes a scatter and the number of modules in phi that the detector has and
+ * returns which module the scatter triggered. If it failed to trigger a module
+ * 0 is returned. Otherwise, the number of the module as a binned value is
+ * returned with 1 as the first module and the highest number of modules as the
+ * final one.
+ */
+int phi_trigger(scatter* a, uint modules) {
+	if (a == NULL || a->loc == NULL) {
+		return 0; // no trigger, but also lets not break anything
+	}
+	if (a->deposit < E_TRIGGER) {
+		return 0;
+	}
+	double phi = vec_to_phi(a->loc);
+	double segment = phi * (1.0 / (2 * PI)) * modules;
+	int final = ((int)segment) + 1;
+	return final;
+}
+
+// a simple function for calculating factorials for optimization check
+uint factorial(uint a) {
+	uint val = 1;
+	for (; a > 0; a--) {
+		val *= a;
+	}
+	return val;
+}
+
+// test factorial
+int test_factorial() {
+	uint result = factorial(5);
+	if (result != 120) {
+		fprintf(stderr, "test_factorial: failed, got %u\n",result);
+		return 0;
+	}
+	return 1;
 }
 
 /* 
@@ -1060,7 +1161,7 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 		return current;
 	}
 
-	double OUT_OF_PLANE_WEIGHT = 2.; // how many sigma a 90 deg out of plane
+	double OUT_OF_PLANE_WEIGHT = 0.; // how many sigma a 90 deg out of plane
 	// scatter counts for 
 	if (TREE_DEBUG) {
 		printf("recursive_search: Origin N = ");
@@ -1234,6 +1335,29 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 		// idk if it is possible to even get here, but we can't continue if we do
 		return NULL;
 	}
+	// lets check the trigger: The two scatter lists must trigger at least two
+	// different modules in phi
+	int near_module = 0;
+	llist* location = list_tail(history_near);
+	while ((near_module == 0) && (location != NULL) && (location->data != NULL)) {
+		near_module = phi_trigger((scatter*)(location->data), PHI_MODULES);
+		location = location->up;
+	}
+	location = history_far;
+	int far_module = 0;
+	while ((far_module == 0) && (location != NULL) && (location->data != NULL)) {
+		int temp = phi_trigger((scatter*)(location->data), PHI_MODULES);
+		if ((abs(temp - near_module) > MODULE_SEPERATION) && (abs(temp - near_module) < (PHI_MODULES - MODULE_SEPERATION))) {
+			far_module = temp;
+		}
+		location = location->down;
+	}
+	if (far_module == 0) {
+		return NULL;
+	}
+
+	possible_branches += len_hist_far * factorial(len_hist_near);
+
 	llist* hist_near_bottom = list_tail(history_near);
 	// time to turn the scattering list into an array for fast access
 	scatter** scatters_near = (scatter**)malloc(len_hist_near * sizeof(scatter*));
@@ -1501,6 +1625,13 @@ llist* build_scatters(llist* detector_history, int id) {
 					// distance and time now have their variation size
 					double dist_theta = PI * drand48();
 					double dist_phi = 2 * PI * drand48();
+					// if (drand48() > 0.96) {
+					// 	// we failed a roll to get the electron direction right,
+					// 	// so do whatever is the right break to behavior
+					// 	if (ele_dir != NULL) {
+
+					// 	}
+					// }
 					// distance variation direction
 					double dist_x = dist_var * cos(dist_phi) * sin(dist_theta);
 					double dist_y = dist_var * sin(dist_phi) * cos(dist_theta);
@@ -1923,6 +2054,17 @@ scatter** find_endpoints_stat(llist* detector_history, double sigma_per_scatter)
 	// now do the same with endpoint 2
 	scatter* endpoint2 = multi_gamma_stat_iteration(scat_list2, scat_list1, sigma_per_scatter, alpha_n_2, alpha_eng_distro_n_2);
 
+	// if we failed just give the highest energy scatter. Leads to far more bad
+	// solutions but also doesn't leave anything on the table.
+	if (NEVER_CUT) {
+		if ((endpoint1 == NULL) && (scat_list1->data != NULL)) {
+			endpoint1 = scat_list1->data;
+		}
+		if ((endpoint2 == NULL) && (scat_list2->data != NULL)) {
+			endpoint2 = scat_list2->data;
+		}
+	}
+
 
 	if ((endpoint1 == NULL) || (endpoint2 == NULL)) {
 		fmap(scat_list1, delete_scatter);
@@ -2200,7 +2342,7 @@ int main(int argc, char **argv) {
 	if (detector_height > 0) {
 		run_in_patient = 1;
 	}
-	if (!test_expected_energy()) {
+	if ((!test_expected_energy()) || (test_vec_to_phi() != 3) || (!test_factorial())) {
 		fprintf(stderr, "tests failed, exiting\n");
 		return 1;
 	}
@@ -2221,6 +2363,12 @@ int main(int argc, char **argv) {
 	hist_num = 0;
 	first_scat_hypot = 0;
 	second_scat_hypot = 0;
+	// uint gold_events = 0;
+	// uint gold_IPS = 0;
+	// uint silver_events = 0;
+	// uint silver_IPS = 0;
+	// uint lead_events = 0;
+	// uint lead_IPS = 0;
 
 	// begin the primary loop over all histories
 	while (history != NULL) {
@@ -2304,18 +2452,22 @@ int main(int argc, char **argv) {
 					print_lor(lor_output, result);
 					fprintf(lor_output, "\n");
 				} else {
-					if ((alpha_n_1[0] == 1) && (alpha_n_2[0] == 1)) {
-						fprintf(gold_out, "%i, ", ((event*)(history->data))->number);
-						print_lor(gold_out, result);
-						fprintf(gold_out, "\n");
-					} else if ((alpha_n_1[0] != 1) != (alpha_n_2[0] != 1)) {
-						fprintf(silver_out, "%i, ", ((event*)(history->data))->number);
-						print_lor(silver_out, result);
-						fprintf(silver_out, "\n");
-					} else if ((alpha_n_1[0] != 1) && (alpha_n_2[0] != 1)) {
-						fprintf(lead_out, "%i, ", ((event*)(history->data))->number);
-						print_lor(lead_out, result);
-						fprintf(lead_out, "\n");
+					if (CUT_IPS && (scatters1 || scatters2)) {
+						// we had an in patient scatter, so don't output the data
+					} else {
+						if ((alpha_n_1[0] == 1) && (alpha_n_2[0] == 1)) {
+							fprintf(gold_out, "%i, ", ((event*)(history->data))->number);
+							print_lor(gold_out, result);
+							fprintf(gold_out, "\n");
+						} else if ((alpha_n_1[0] != 1) != (alpha_n_2[0] != 1)) {
+							fprintf(silver_out, "%i, ", ((event*)(history->data))->number);
+							print_lor(silver_out, result);
+							fprintf(silver_out, "\n");
+						} else if ((alpha_n_1[0] != 1) && (alpha_n_2[0] != 1)) {
+							fprintf(lead_out, "%i, ", ((event*)(history->data))->number);
+							print_lor(lead_out, result);
+							fprintf(lead_out, "\n");
+						}
 					}
 				}
 
@@ -2419,6 +2571,7 @@ int main(int argc, char **argv) {
 	printf("\n\nTotal scatters: %u\nElectron path scatters%u\n",total_scatters,path_scatters);
 	printf("Percentage with path: %lf\n", ((double)path_scatters/(double)total_scatters));
 
+	printf("Number of possible branches: %llu\n", possible_branches);
 
 	fclose(in_histories);
 	fclose(out_in_patient);
