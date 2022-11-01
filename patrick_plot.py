@@ -35,13 +35,17 @@ def add_minor_ticks(plot, ticks, bot=True, tp=True, lft=True, rght=True, xticks=
 			plot.yaxis.set_minor_locator(AutoMinorLocator(int(ticks)))		
 
 # file_name = "lor_data/in_pat_1mil_0_8_no_time"
-# file_name = "/home/kepler/pet_simulations/sphere_dot/1mil_dot_scattered/resultant"
+file_name = "/home/kepler/pet_simulations/sphere_dot/1mil_dot_scattered/resultant"
 # file_name = "lor_data/types_no_IPS1"
 # file_name = "lor_data/types_no_IPS1_3"
 # file_name = "lor_data/types_no_IPS_OOPW_0"
 # file_name = "lor_data/types_IPS_OOPW_0"
-file_name = "lor_data/types_no_IPS_keep_all"
+# file_name = "lor_data/types_no_IPS_keep_all"
 # file_name = "lor_data/types_IPS"
+# file_name = "lor_data/types_no_IPS0_7"
+# file_name = "lor_data/types_no_IPS1"
+# file_name = "lor_data/types_no_IPS1_3"
+# file_name = "lor_data/types_no_IPS1_6"
 print(file_name)
 
 gold_data = np.loadtxt(file_name + ".gold", delimiter=',')
@@ -58,6 +62,9 @@ num_of_bins = 81
 gold_hist, gold_bins = np.histogram(gold_x, bins=num_of_bins, range=(-10,10))
 silver_hist, silver_bins = np.histogram(silver_x, bins=num_of_bins, range=(-10,10))
 lead_hist, lead_bins = np.histogram(lead_x, bins=num_of_bins, range=(-10,10))
+gold_hist_2, gold_bins_2 = np.histogram(gold_x, bins=num_of_bins, range=(-.1,.1))
+silver_hist_2, silver_bins_2 = np.histogram(silver_x, bins=num_of_bins, range=(-.1,.1))
+lead_hist_2, lead_bins_2 = np.histogram(lead_x, bins=num_of_bins, range=(-.1,.1))
 
 fig_x, x_hist = plt.subplots()
 plt.subplots_adjust(bottom=0.12, left=0.18, right=0.92)
@@ -69,7 +76,7 @@ x_hist.plot(gold_bins[:-1] + bin_offset,gold_hist, label='gold events')
 x_hist.plot(gold_bins[:-1] + bin_offset,silver_hist, label='silver events')
 x_hist.plot(gold_bins[:-1] + bin_offset,lead_hist, label='lead events')
 
-x_hist.set_xlabel("x distance from center")
+x_hist.set_xlabel("x distance from center (cm)")
 x_hist.set_ylabel("number of LORs")
 
 x_hist.tick_params(which = 'minor', bottom=True, top=True)
@@ -78,19 +85,23 @@ x_hist.xaxis.set_minor_locator(AutoMinorLocator(5))
 
 x_hist.legend()
 
+bin_offset = (gold_bins_2[1] - gold_bins_2[0]) / 2
+
 fig_x_lin, x_hist_lin = plt.subplots()
 plt.subplots_adjust(bottom = 0.12, left=0.18, right=0.92)
-x_hist_lin.plot(gold_bins[:-1] + bin_offset,gold_hist, label='gold events')
-x_hist_lin.plot(gold_bins[:-1] + bin_offset,silver_hist, label='silver events')
-x_hist_lin.plot(gold_bins[:-1] + bin_offset,lead_hist, label='lead events')
+x_hist_lin.plot(gold_bins_2[:-1] + bin_offset,gold_hist_2, label='gold events')
+x_hist_lin.plot(gold_bins_2[:-1] + bin_offset,silver_hist_2, label='silver events')
+x_hist_lin.plot(gold_bins_2[:-1] + bin_offset,lead_hist_2, label='lead events')
 x_hist_lin.set_ylim(bottom=0.0)
+x_hist_lin.set_xlabel("x distance from center (cm)")
+x_hist_lin.set_ylabel("number of LORs")
 
 add_minor_ticks(x_hist_lin,5)
 x_hist_lin.legend()
 
-print("Gold lors: " + str(len(gold_x)))
-print("Silver lors: " + str(len(silver_x)))
-print("Lead lors: " + str(len(lead_x)))
+print("Gold lors: " + str(len(gold_x)/2010.20))
+print("Silver lors: " + str(len(silver_x)/2010.2))
+print("Lead lors: " + str(len(lead_x)/2010.2))
 
-fig_x.savefig('patrick_plot_v2')
-fig_x_lin.savefig('patrick_plot_lin_v2')
+fig_x.savefig('patrick_plot_v3')
+fig_x_lin.savefig('patrick_plot_lin_v3')
