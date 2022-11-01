@@ -48,6 +48,10 @@ uint hist_num;
 uint total_scatters = 0;
 uint path_scatters = 0;
 unsigned long long possible_branches = 0;
+uint missed_reconstructions = 0; // add 1 for each pair of gammas that made it to
+// the detector but did not get reconstructed
+uint missed_reconstruction_IPS_mask = 1; // stop the addition of a missed reconstruction
+// if the reconstruction would have been of an IPS
 
 
   
@@ -2071,6 +2075,7 @@ scatter** find_endpoints_stat(llist* detector_history, double sigma_per_scatter)
 		fmap(scat_list2, delete_scatter);
 		delete_list(scat_list1);
 		delete_list(scat_list2);
+		missed_reconstructions += missed_reconstruction_IPS_mask;
 		return NULL;
 	}
 
@@ -2425,6 +2430,11 @@ int main(int argc, char **argv) {
 			// predicted_vs_real[1] = 0;
 			// predicted_vs_real[2] = 0;
 			// predicted_vs_real[3] = 0;
+			if (in_patient_occurance) {
+				missed_reconstruction_IPS_mask = 0;
+			} else {
+				missed_reconstruction_IPS_mask = 1;
+			}
 
 			scatter** endpoints = find_endpoints_stat(in_det_hist, energy_cutoff);
 
@@ -2572,6 +2582,8 @@ int main(int argc, char **argv) {
 	printf("Percentage with path: %lf\n", ((double)path_scatters/(double)total_scatters));
 
 	printf("Number of possible branches: %llu\n", possible_branches);
+
+	printf("Missed reconstructions (without IPS): %u\n", missed_reconstructions);
 
 	fclose(in_histories);
 	fclose(out_in_patient);
