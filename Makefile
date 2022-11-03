@@ -23,6 +23,9 @@ debug_reverse_kin: inverse_kinematics.c llist.c vector_ops.c
 render: lor_render.o vector_ops.o ray_trace.o llist.o
 	$(CC) -o renderer $^ $(CFLAGS)
 
+traverse_render: lor_render_traversal.o vector_ops.o ray_trace.o llist.o
+	$(CC) -o traverse_renderer $^ $(CFLAGS)
+
 light_reverse_kin: inverse_kinematics_lightweight.o llist.o vector_ops.o
 	$(CC) -o light_reverse_kin $^ $(CFLAGS)
 
@@ -31,6 +34,9 @@ debug_light_reverse_kin: inverse_kinematics_lightweight.c llist.c vector_ops.c
 
 debug_render: lor_render.c vector_ops.c ray_trace.o llist.o
 	$(CC) -o debug_renderer $^ $(CDBGFLAGS)
+
+debug_traverse_render: lor_render_traversal.c vector_ops.c ray_trace.o llist.o
+	$(CC) -o debug_traverse_renderer $^ $(CDBGFLAGS)
 
 profile_light_reverse_kin: inverse_kinematics_lightweight.c llist.c vector_ops.c
 	$(CC) -o profile_light_reverse_kinematics $^ $(CPRFFLAGS)
