@@ -487,6 +487,7 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
         traversal_free(exit2);
     } else if ((exit2 != NULL) && (exit2->t > 0)) {
         plane_intersect = exit2;
+        traversal_free(exit1);
     }
     // now for projected cylinder/sphere work. First rotate everything so that
     // the cylinder points in the z axis
@@ -511,6 +512,7 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
     ray* new_path = ray_build(ray_pos, ray_dir);
     double* flat_cyl = sphere_crossing(new_path, center, cyl->dim[0]);
     if (flat_cyl == NULL) {
+        // no sphere crossing occured
         ray_free(new_path);
         free(center);
         return plane_intersect;
@@ -583,9 +585,11 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
             traversal_free(plane_intersect);
             return out;
         } else {
+            // we passed in one round side, out the other
             if (full_crossing != NULL) {
                 full_crossing[0] = 1;
             }
+            traversal_free(plane_intersect); // should never run, but just in case
             double dist = abs(flat_cyl[0] - flat_cyl[1]);
             if (flat_cyl[0] > flat_cyl[1]) {
                 free(flat_cyl);

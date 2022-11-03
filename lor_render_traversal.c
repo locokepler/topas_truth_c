@@ -643,8 +643,8 @@ void add_lor(render* universe, lor* lor, double weight) {
 			add_along_ray(universe, path, attenuation, lor->long_uncert * universe->cutoff, lor->long_uncert);
 			free(displacement);
 			ray_free(path);
-			traversal_free(exit);
 		}
+		traversal_free(exit);
 	} else {
 		vec3d* reverse = vec_sub(NULL, travel->dir);
 		free(travel->dir);
@@ -706,12 +706,45 @@ void print_volume(FILE* output, render* universe) {
 struct _add_lor_union {
 	render* universe;
 	lor* lor;
-	double weight;
 };
 
 void* wrapper_add_lor(void *a) {
 	struct _add_lor_union *open = (struct _add_lor_union *)a;
-	add_lor(open->universe, open->lor, open->weight);
+	add_lor(open->universe, open->lor, 1);
+
+	double weight_1 = centered_normal(1, 1) / PHI_LORS;
+	double weight_2 = centered_normal(1, 2) / PHI_LORS;
+	vec3d* angle = three_vec(1, 0, 0);
+	for (int i = 0; i < PHI_LORS; i++) {
+		double phi = (2 * PI * (double)i) / PHI_LORS;
+		angle->x = cos(phi);
+		angle->y = sin(phi);
+		vec3d* shift_unnorm = vec_cross(angle, open->lor->dir);
+		vec3d* shift_norm = vec_norm(shift_unnorm);
+		vec3d* shift = vec_scaler(shift_norm, open->lor->transverse_uncert);
+		if (open->universe->cutoff >= 1) {
+			// add 1 sigma lors
+			vec3d* new_center = vec_add(open->lor->center, shift);
+			vec3d* dir_cpy = vec_copy(open->lor->dir);
+			lor* sigma_1 = lor_build(new_center, dir_cpy, open->lor->long_uncert, open->lor->transverse_uncert);
+			add_lor(open->universe, sigma_1, weight_1);
+			free_lor(sigma_1);
+		}
+		if (open->universe->cutoff >= 2) {
+			vec3d* shift_2 = vec_scaler(shift, 2);
+			vec3d* new_center = vec_add(open->lor->center, shift_2);
+			vec3d* dir_cpy = vec_copy(open->lor->dir);
+			lor* sigma_2 = lor_build(new_center, dir_cpy, open->lor->long_uncert, open->lor->transverse_uncert);
+			add_lor(open->universe, sigma_2, weight_2);
+			free_lor(sigma_2);
+			free(shift_2);
+		}
+		free(shift_unnorm);
+		free(shift_norm);
+		free(shift);
+	}
+	free(angle);
+
 	free_lor(open->lor);
 	free(open);
 	return 0;
@@ -835,9 +868,9 @@ int main(int argc, char const *argv[])
 		// struct _add_lor_union *arguments = (struct _add_lor_union *)malloc(sizeof(struct _add_lor_union));
 		// arguments->universe = master_copy;
 		// arguments->lor = operative_lor;
-		// arguments->weight = 1; // must be changed for transverse behavior
+		// // arguments->weight = 1; // must be changed for transverse behavior
 		// pthread_create(&tid[cur_thread], NULL, wrapper_add_lor, arguments);
-		// pthread_create(&tid[cur_thread], NULL, wrapper_add_lor_plane, arguments);
+		// // pthread_create(&tid[cur_thread], NULL, wrapper_add_lor_plane, arguments);
 		
 		// make the full set of LORs
         add_lor(master_copy, operative_lor, 1.0);
@@ -873,9 +906,9 @@ int main(int argc, char const *argv[])
 			free(shift);
 		}
 		free(angle);
-
-
         free_lor(operative_lor);
+
+
 
 		operative_lor = read_lor(input_lor);
 		iteration++;

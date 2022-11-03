@@ -35,7 +35,7 @@ debug_light_reverse_kin: inverse_kinematics_lightweight.c llist.c vector_ops.c
 debug_render: lor_render.c vector_ops.c ray_trace.o llist.o
 	$(CC) -o debug_renderer $^ $(CDBGFLAGS)
 
-debug_traverse_render: lor_render_traversal.c vector_ops.c ray_trace.o llist.o
+debug_traverse_render: lor_render_traversal.c vector_ops.c ray_trace.c llist.c
 	$(CC) -o debug_traverse_renderer $^ $(CDBGFLAGS)
 
 profile_light_reverse_kin: inverse_kinematics_lightweight.c llist.c vector_ops.c
