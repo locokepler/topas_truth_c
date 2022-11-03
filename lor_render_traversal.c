@@ -9,8 +9,11 @@
 #include "llist.h"
 
 #define MAX_THREAD_CALLS 4
+#define PHI_LORS 10
+#define SHOW_TRAVERSE_ERRORS 0
 
-#define PHI_LORS
+#define PI 3.141592653589
+
 
 pthread_t tid[MAX_THREAD_CALLS];
 pthread_mutex_t volume_lock;
@@ -31,7 +34,11 @@ typedef struct _intvec {
 /* Takes a file of lines of response and builds them into a voxelized image
  * by taking the LOR and stepping through each voxel it crosses. The LOR weight
  * at the midpoint of the LOR's journey through the voxel is added (times an
- * attenuation weight). This lacks a transverse resolution behavior.
+ * attenuation weight). For transverse behavior it makes several LORs around
+ * the true LOR. These are made at 1 and 2 sigma (cut willing). These have a
+ * number around in phi given by PHI_LORS and a weight of 1 sigma / PHI_LORS.
+ * This means that the total set of LORs from a sigma distance has the same weight
+ * no matter the number chosen
  * 
  * Takes the same definition and .lor files as lor_render1
  */
@@ -84,6 +91,21 @@ lor* read_lor(FILE* input) {
 	new->transverse_uncert = transverse * trans_adjust;
 
 
+	return new;
+}
+
+lor* lor_build(vec3d* center, vec3d* dir, double long_uncert, double trans_uncert) {
+	if ((center == NULL) || (dir == NULL)) {
+		return NULL;
+	}
+	lor* new = (lor*)calloc(1, sizeof(lor));
+	if (new == NULL) {
+		return NULL;
+	}
+	new->center = center;
+	new->dir = dir;
+	new->long_uncert = long_uncert;
+	new->transverse_uncert = trans_uncert;
 	return new;
 }
 
@@ -505,7 +527,9 @@ int add_along_ray(render* universe, ray* travel, double atten, double max_dist, 
 		// how far did we go in the voxel, and where did we exit?
 		traversal* exit = exit_rectangular_prism(travel, voxel, &cross);
 		if (exit == NULL) {
-			fprintf(stderr, "add_along_ray: ERROR! failed to intersect voxel!\n");
+			if (SHOW_TRAVERSE_ERRORS) {
+				fprintf(stderr, "add_along_ray: ERROR! failed to intersect voxel!\n");
+			}
 			return 0;
 		}
 		vec3d* midpoint_adj = vec_scaler(travel->dir, -0.5 * exit->t);
@@ -530,7 +554,9 @@ int add_along_ray(render* universe, ray* travel, double atten, double max_dist, 
 		int dy = vox_checkpoint->y - index[1];
 		int dz = vox_checkpoint->z - index[2];
 		if ((dx == 0) && (dy == 0) && (dz == 0)) {
-			fprintf(stderr, "add_along_ray: ERROR! failed to move!\n");
+			if (SHOW_TRAVERSE_ERRORS) {
+				fprintf(stderr, "add_along_ray: ERROR! failed to move!\n");
+			}
 			return 0;
 		}
 		// set the index to the new voxel location
@@ -565,12 +591,12 @@ int add_along_ray(render* universe, ray* travel, double atten, double max_dist, 
  * repeats in the other direction. For each voxel it adds the weight of the line
  * at the midpoint of its trip through the voxel.
  */
-void add_lor(render* universe, lor* lor) {
+void add_lor(render* universe, lor* lor, double weight) {
 	if (universe == NULL || lor == NULL) {
 		return;
 	}
 	// get the attenuation correction value
-	double attenuation = atten_correction(lor);
+	double attenuation = atten_correction(lor) * weight;
 	// check if we are in the image volume.
 	float dims_of_universe[3] = {(float)(universe->dimensions[0]) / universe->conversion->x,
 									(float)(universe->dimensions[1]) / universe->conversion->y,
@@ -680,11 +706,12 @@ void print_volume(FILE* output, render* universe) {
 struct _add_lor_union {
 	render* universe;
 	lor* lor;
+	double weight;
 };
 
 void* wrapper_add_lor(void *a) {
 	struct _add_lor_union *open = (struct _add_lor_union *)a;
-	add_lor(open->universe, open->lor);
+	add_lor(open->universe, open->lor, open->weight);
 	free_lor(open->lor);
 	free(open);
 	return 0;
@@ -808,9 +835,46 @@ int main(int argc, char const *argv[])
 		// struct _add_lor_union *arguments = (struct _add_lor_union *)malloc(sizeof(struct _add_lor_union));
 		// arguments->universe = master_copy;
 		// arguments->lor = operative_lor;
+		// arguments->weight = 1; // must be changed for transverse behavior
 		// pthread_create(&tid[cur_thread], NULL, wrapper_add_lor, arguments);
 		// pthread_create(&tid[cur_thread], NULL, wrapper_add_lor_plane, arguments);
-        add_lor(master_copy, operative_lor);
+		
+		// make the full set of LORs
+        add_lor(master_copy, operative_lor, 1.0);
+		double weight_1 = centered_normal(1, 1) / PHI_LORS;
+		double weight_2 = centered_normal(1, 2) / PHI_LORS;
+		vec3d* angle = three_vec(1, 0, 0);
+		for (int i = 0; i < PHI_LORS; i++) {
+			double phi = (2 * PI * (double)i) / PHI_LORS;
+			angle->x = cos(phi);
+			angle->y = sin(phi);
+			vec3d* shift_unnorm = vec_cross(angle, operative_lor->dir);
+			vec3d* shift_norm = vec_norm(shift_unnorm);
+			vec3d* shift = vec_scaler(shift_norm, operative_lor->transverse_uncert);
+			if (master_copy->cutoff >= 1) {
+				// add 1 sigma lors
+				vec3d* new_center = vec_add(operative_lor->center, shift);
+				vec3d* dir_cpy = vec_copy(operative_lor->dir);
+				lor* sigma_1 = lor_build(new_center, dir_cpy, operative_lor->long_uncert, operative_lor->transverse_uncert);
+				add_lor(master_copy, sigma_1, weight_1);
+				free_lor(sigma_1);
+			}
+			if (master_copy->cutoff >= 2) {
+				vec3d* shift_2 = vec_scaler(shift, 2);
+				vec3d* new_center = vec_add(operative_lor->center, shift_2);
+				vec3d* dir_cpy = vec_copy(operative_lor->dir);
+				lor* sigma_2 = lor_build(new_center, dir_cpy, operative_lor->long_uncert, operative_lor->transverse_uncert);
+				add_lor(master_copy, sigma_2, weight_2);
+				free_lor(sigma_2);
+				free(shift_2);
+			}
+			free(shift_unnorm);
+			free(shift_norm);
+			free(shift);
+		}
+		free(angle);
+
+
         free_lor(operative_lor);
 
 		operative_lor = read_lor(input_lor);
