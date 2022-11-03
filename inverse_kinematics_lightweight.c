@@ -26,7 +26,7 @@
 #define MODULE_SEPERATION 3 // min number of modules separation for trigger
 #define NEVER_CUT 0
 
-#define TIME_UNCERT_CM 4.33
+#define TIME_UNCERT_CM 6.5
 #define SPC_UNCERT 0.01
 #define UNCERT_REP 12
 
