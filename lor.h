@@ -21,7 +21,7 @@ struct _rend {
   vec3d* least_corner; // minimum position values of render volume
   vec3d* max_corner;   // maximum position values of render volume
   double cutoff;      // the cutoff beyond which no values are processed for a LOR
-  void (*combiner)(render*, double, int*); // adds a value of the lor to the render
+  void (*combiner)(render*, double, int*, double); // adds a value of the lor to the render
 };
 
 render* master_copy = NULL;

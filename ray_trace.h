@@ -42,6 +42,9 @@ ray* ray_build(vec3d* pos, vec3d* dir);
 // frees a ray structure
 void* ray_free(ray* src);
 
+// frees a traversal structure
+void traversal_free(traversal* src);
+
 // makes a shape
 shape* shape_build(int type, float* pos, float* dim, int axis, float attenuation);
 
@@ -71,6 +74,15 @@ int geometry_full_tests();
 
 // prints a given geometry
 void print_geometry(FILE* output, geometry* a);
+
+/*
+ * Takes a ray and prism and finds how far the ray traveled (in the direction of
+ * travel) through the prism. Returns the exit location and distance travled.
+ * If the traversal started outside the box (and therefore there are two crossings
+ * in the direction of travel) the total distance inside the box is returned,
+ * with the farther exit location and full_crossing is set to true.
+ */
+traversal* exit_rectangular_prism(ray* path, shape* prism, int* full_crossing);
 
 
 #endif

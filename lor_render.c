@@ -97,7 +97,7 @@ void print_lor(FILE* output, lor* lor) {
 // takes a render (for the array), a double to add to it, and the location to
 // do so. The indexes array should be of length 3, an x, y, and z coord.
 // does basic addition of doubles
-void add_double(render* u, double x, int* indexes) {
+void add_double(render* u, double x, int* indexes, double arg) {
 	u->volume[indexes[0] * u->dimensions[1] * u->dimensions[2]
 				+ indexes[1] * u->dimensions[2]
 				+ indexes[2]] += x;
@@ -108,7 +108,7 @@ void add_double(render* u, double x, int* indexes) {
 // do so. The indexes array should be of length 3, an x, y, and z coord.
 // does addition of doubles and then also a multiplicative combination with
 // log reduction
-void add_mult_log(render* u, double x, int* indexes) {
+void add_mult_log(render* u, double x, int* indexes, double arg) {
 	u->volume[indexes[0] * u->dimensions[1] * u->dimensions[2]
 				+ indexes[1] * u->dimensions[2]
 				+ indexes[2]] += x;
@@ -124,7 +124,7 @@ void add_mult_log(render* u, double x, int* indexes) {
 // do so. The indexes array should be of length 3, an x, y, and z coord.
 // does addition of doubles and then also a multiplicative combination with
 // log reduction
-void add_mult(render* u, double x, int* indexes) {
+void add_mult(render* u, double x, int* indexes, double arg) {
 	u->volume[indexes[0] * u->dimensions[1] * u->dimensions[2]
 				+ indexes[1] * u->dimensions[2]
 				+ indexes[2]] += x;
@@ -140,17 +140,17 @@ void add_mult(render* u, double x, int* indexes) {
 // so. The indexes should be of length 3, and x, y, and z coord. Adds a 1 to the
 // volume no matter what. You read that right. Its binary addition. If you call
 // it, it will add.
-void add_binary(render* u, double x, int* indexes) {
+void add_binary(render* u, double x, int* indexes, double atten) {
 	u->volume[indexes[0] * u->dimensions[1] * u->dimensions[2]
 				+ indexes[1] * u->dimensions[2]
-				+ indexes[2]] += 1.0;
+				+ indexes[2]] += 1.0 * atten;
 	return;
 }
 
 // takes a render (for the arry), a double to add to it, and the location to do
 // so. The indexes should be of length 3, and x, y, and z coord. Adds the log of
 // the value given
-void add_log(render* u, double x, int* indexes) {
+void add_log(render* u, double x, int* indexes, double arg) {
 	u->volume[indexes[0] * u->dimensions[1] * u->dimensions[2]
 				+ indexes[1] * u->dimensions[2]
 				+ indexes[2]] += log(x + 1);
@@ -578,7 +578,7 @@ void add_lor(render* universe, lor* lor) {
 					int index[3] = {i,j,k};
 
 					pthread_mutex_lock(&volume_lock);
-					universe->combiner(universe, total_value, index);
+					universe->combiner(universe, total_value, index, attenuation);
 					pthread_mutex_unlock(&volume_lock);
 				}
 			}
@@ -788,7 +788,7 @@ void add_lor_plane(render* universe, lor* lor) {
 						int index[3] = {i,j,k};
 
 						pthread_mutex_lock(&volume_lock);
-						universe->combiner(universe, total_value, index);
+						universe->combiner(universe, total_value, index, attenuation);
 						pthread_mutex_unlock(&volume_lock);
 					}
 				}

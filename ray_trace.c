@@ -172,8 +172,8 @@ int coord_swap(vec3d* coord, int axis) {
         // move the z axis onto the y axis
         double y_old = coord->y;
         double z_old = coord->z;
-        coord->y = ((double)axis) * z_old;
-        coord->z = -((double)axis) * y_old;
+        coord->y = ((double)(axis/abs(axis))) * z_old;
+        coord->z = -((double)(axis/abs(axis))) * y_old;
         return 1;
     } else {
         // axis is 3, for 3 we keep the z where it is, same for -3
@@ -237,7 +237,7 @@ traversal* plane_intersect_circle(float size, int axis, vec3d* center_src, ray* 
     if ((center_src == NULL) || (propagate_src == NULL)) {
         return NULL;
     }
-    // rotate everything so that it is all lined up
+    // rotate everything so that it is all lined up (as if the normal was zhat)
     vec3d* center = vec_copy(center_src);
     ray* propagate = ray_copy(propagate_src);
     coord_swap(center, axis);
@@ -289,15 +289,18 @@ traversal* exit_rectangular_prism(ray* path, shape* prism, int* full_crossing) {
         // check the face in the + axis direction and the -axis direction
         // each face has the dimensions of the two axis not using i
         float size[2];
-        if (i < 2) {
-            size[0] = prism->dim[i + 1];
-        } else {
-            size[0] = prism->dim[0];
-        }
-        if (i < 1) {
-            size[1] = prism->dim[i + 2];
-        } else {
-            size[1] = prism->dim[i - 1];
+        if (i == 0) {
+            // rotation from +x to +z
+            size[0] = prism->dim[2]; // x = dim[z]
+            size[1] = prism->dim[1]; // y = dim[y]
+        } else if (i == 1) {
+            // rotation from +y to +z
+            size[0] = prism->dim[0]; // x = dim[x]
+            size[1] = prism->dim[2]; // y = dim[z]
+        } else /*i == 2*/ {
+            // rotation from +z to +z
+            size[0] = prism->dim[0]; // x = dim[x]
+            size[1] = prism->dim[1]; // y = dim[y]
         }
         // get the offset of the plane we will check from the center of the shape
         double offset = prism->dim[i] * 0.5;
@@ -451,13 +454,13 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
     }
     vec3d* center = three_vec(cyl->pos[0], cyl->pos[1], cyl->pos[2]);
     double half_height = cyl->dim[1] * 0.5;
-    vec3d* offset = three_vec(half_height * (cyl->axis == 0),
-                                half_height * (cyl->axis == 1),
-                                half_height * (cyl->axis == 2));
+    vec3d* offset = three_vec(half_height * (cyl->axis == 1),
+                                half_height * (cyl->axis == 2),
+                                half_height * (cyl->axis == 3));
     vec3d* plane1 = vec_add(center, offset);
     vec3d* plane2 = vec_sub(center, offset);
-    traversal* exit1 = plane_intersect_circle(cyl->dim[0], cyl->axis + 1, plane1, path);
-    traversal* exit2 = plane_intersect_circle(cyl->dim[0], cyl->axis + 1, plane2, path);
+    traversal* exit1 = plane_intersect_circle(cyl->dim[0], cyl->axis, plane1, path);
+    traversal* exit2 = plane_intersect_circle(cyl->dim[0], cyl->axis, plane2, path);
     free(offset);
     free(plane1);
     free(plane2);
@@ -472,15 +475,16 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
             if (exit1->t > exit2->t) {
                 double dist = exit1->t - exit2->t;
                 exit1->t = dist;
-                free(exit2);
+                traversal_free(exit2);
                 return exit1;
             } else {
                 double dist = exit2->t - exit1->t;
                 exit2->t = dist;
-                free(exit1);
+                traversal_free(exit1);
                 return exit2;
             }
         }
+        traversal_free(exit2);
     } else if ((exit2 != NULL) && (exit2->t > 0)) {
         plane_intersect = exit2;
     }
@@ -488,9 +492,9 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
     // the cylinder points in the z axis
     vec3d* ray_dir = vec_copy(path->dir);
     vec3d* ray_pos = vec_copy(path->pos);
-    coord_swap(center, cyl->axis + 1);
-    coord_swap(ray_dir, cyl->axis + 1);
-    coord_swap(ray_pos, cyl->axis + 1);
+    coord_swap(center, cyl->axis);
+    coord_swap(ray_dir, cyl->axis);
+    coord_swap(ray_pos, cyl->axis);
     // project onto xy plane (but keep the z avaliable for later)
 
     double z_dir = ray_dir->z;
@@ -544,12 +548,13 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
         }
         free(center);
         ray_free(new_path);
-        coord_swap(ends[0], -(cyl->axis + 1));
-        coord_swap(ends[1], -(cyl->axis + 1));
+        coord_swap(ends[0], -(cyl->axis));
+        coord_swap(ends[1], -(cyl->axis));
         // we now have the available ends: plane_intersect, ends[0], ends[1]
         // no more than 2 of 3 can exist
         if (num_end == 0) {
             // no interaction with the walls occured in positive t.
+            free(flat_cyl);
             return plane_intersect;
         }
         if (num_end == 1) {
@@ -657,8 +662,7 @@ double propagate(ray* path_src, geometry* all) {
                 i = 0;
                 closest = INFINITY;
                 best_find = -1;
-            }
-            if (crossings[i] != NULL) {
+            } else if (crossings[i] != NULL) {
                 // we had a full crossing, is the entrance closer than any
                 // previous one
                 double entry_dist = vec_dist(path->pos, crossings[i]->intersection) - crossings[i]->t;
@@ -747,7 +751,101 @@ int test_prism_1() {
     return !fail;
 }
 
+
 // checks rectangualr prisms with a partial crossing
+int test_prism_2() {
+    // build the prism for testing
+    float pos[3] = {1.0, -1.0, 1.0};
+    float dim[3] = {22.0, 22.0, .1};
+    shape* box = shape_build(REC_PRISM, pos, dim, 0, 1.0);
+    vec3d* start = three_vec(1.0, -7.0, 1.0);
+    vec3d* point = three_vec(0.0, 2.0, 0.0);
+    vec3d* unit_point = vec_norm(point);
+    free(point);
+    ray* path = ray_build(start, unit_point);
+    geometry* world = geometry_build(&box, 1);
+    double dist = propagate(path, world);
+    int full;
+    traversal* test = exit_rectangular_prism(path, box, &full);
+
+    free(box);
+    free(world);
+    ray_free(path);
+
+    int fail = 0;
+    if (full) {
+        fprintf(stderr, "test_prism_2: full crossing reported\n");
+        fail++;
+    }
+    double correct = 17;
+    double dir_test = fabs(test->t - correct);
+    if (dir_test > 0.001) {
+        fprintf(stderr, "test_prism_2: exit_rectangular_prism gives %lf, should be %lf\n",test->t, correct);
+        fail++;
+    }
+    if (fabs(dist - correct) > 0.001) {
+        fprintf(stderr, "test_prism_2: propagate gives wrong distance %lf, should be %lf\n", dist, correct);
+        fail++;
+    }
+    if (fail) {
+        fprintf(stderr, "test_prism_2: exiting with %i errors\n", fail);
+    } else {
+        printf("test_prism_2: passed tests\n");
+    }
+    traversal_free(test);
+    return !fail;
+}
+
+// checks rectangular prisms with a full crossing
+int test_prism_3() {
+    // build the prism for testing
+    float pos[3] = {0.0, 0.0, 0.0};
+    float dim[3] = {22.0, 22.0, .1};
+    shape* box = shape_build(REC_PRISM, pos, dim, 0, 1.0);
+    vec3d* start = three_vec(0.0, 1.0, 0.0);
+    vec3d* point = three_vec(1.0, 1.0, 0.0);
+    vec3d* unit_point = vec_norm(point);
+    free(point);
+    ray* path = ray_build(start, unit_point);
+    geometry* world = geometry_build(&box, 1);
+    double dist = propagate(path, world);
+    int full;
+    traversal* test = exit_rectangular_prism(path, box, &full);
+
+    free(box);
+    free(world);
+    ray_free(path);
+
+    int fail = 0;
+    if (test == NULL) {
+        fprintf(stderr, "test_prism_3: no intersection reported!\n");
+        fail++;
+        return 0;
+    }
+
+    if (full) {
+        fprintf(stderr, "test_prism_3: full crossing reported\n");
+        fail++;
+    }
+    double correct = sqrt((10 * 10) + (10 * 10));
+    double dir_test = fabs(test->t - correct);
+    if (dir_test > 0.001) {
+        fprintf(stderr, "test_prism_3: exit_rectangular_prism gives %lf, should be %lf\n",test->t, correct);
+        fail++;
+    }
+    if (fabs(dist - correct) > 0.001) {
+        fprintf(stderr, "test_prism_3: propagate gives wrong distance %lf, should be %lf\n", dist, correct);
+        fail++;
+    }
+    if (fail) {
+        fprintf(stderr, "test_prism_3: exiting with %i errors\n", fail);
+    } else {
+        printf("test_prism_3: passed tests\n");
+    }
+    traversal_free(test);
+    return !fail;
+}
+
 
 
 // checks spheres with a full crossing
@@ -799,11 +897,11 @@ int test_sphere_1() {
 
 // checks cylinder with a full crossing (in round, out plane)
 int test_cyl_1() {
-    // build the sphere for testing
-    float pos[3] = {1.0, -1.0, 1.0};
+    // build the cylinder for testing
+    float pos[3] = {0.0, 0.0, 0.0};
     float dim[3] = {1.0, 2.0, 2.0}; // radius 1, height 2
     shape* cyl = shape_build(CYLINDER, pos, dim, 1, 1.0);
-    vec3d* start = three_vec(-1.0, -2.0, 1.0);
+    vec3d* start = three_vec(-1.0, -2.0, 0.0);
     vec3d* point = three_vec(1.0, 1.0, 0.0);
     vec3d* unit_point = vec_norm(point);
     free(point);
@@ -847,6 +945,55 @@ int test_cyl_1() {
     return !fail;
 }
 
+// checks cylinder with a partial crossing (out plane)
+int test_cyl_2() {
+    // build the cylinder for testing
+    float pos[3] = {1.0, -1.0, 1.0};
+    float dim[3] = {1.0, 2.0, 2.0}; // radius 1, height 2
+    shape* cyl = shape_build(CYLINDER, pos, dim, 3, 1.0);
+    vec3d* start = three_vec(1.0, -1.0, 1.0);
+    vec3d* point = three_vec(0.0, 0.0, 1.0);
+    vec3d* unit_point = vec_norm(point);
+    free(point);
+    ray* path = ray_build(start, unit_point);
+    geometry* world = geometry_build(&cyl, 1);
+    double dist = propagate(path, world);
+    int full;
+    traversal* test = exit_cyl(path, cyl, &full);
+
+
+    free(cyl);
+    free(world);
+    ray_free(path);
+
+    if (test == NULL) {
+        fprintf(stderr, "test_cyl_2: exit_cyl failed to give result\n");
+        return 0;
+    }
+
+    int fail = 0;
+    if (full) {
+        fprintf(stderr, "test_cyl_2: full crossing reported incorrectly\n");
+        fail++;
+    }
+    double correct = 1.0;
+    double dir_test = fabs(test->t - correct);
+    if (dir_test > 0.001) {
+        fprintf(stderr, "test_cyl_2: exit_cyl gives %lf, should be %lf\n",test->t, correct);
+        fail++;
+    }
+    if (fabs(dist - correct) > 0.001) {
+        fprintf(stderr, "test_cyl_2: propagate gives wrong distance %lf, should be %lf\n", dist, correct);
+        fail++;
+    }
+    if (fail) {
+        fprintf(stderr, "test_cyl_2: exiting with %i errors\n", fail);
+    } else {
+        printf("test_cyl_2: passed tests\n");
+    }
+    traversal_free(test);
+    return !fail;
+}
 
 // checks cylinder with a partial crossing (out round)
 
@@ -854,10 +1001,13 @@ int test_cyl_1() {
 
 // the full suite of tests for ray tracing
 int geometry_full_tests() {
-    int num_of_tests = 3;
+    int num_of_tests = 6;
     int a = test_prism_1();
+    a += test_prism_2();
+    a += test_prism_3();
     a += test_sphere_1();
     a += test_cyl_1();
+    a += test_cyl_2();
     printf("ray tracing passed %i out of %i tests\n", a, num_of_tests);
     return (a == num_of_tests);
 }
