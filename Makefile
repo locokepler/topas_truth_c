@@ -26,6 +26,9 @@ render: lor_render.o vector_ops.o ray_trace.o llist.o
 traverse_render: lor_render_traversal.o vector_ops.o ray_trace.o llist.o
 	$(CC) -o traverse_renderer $^ $(CFLAGS)
 
+rod_traversal: rod_traversal.o vector_ops.o ray_trace.o llist.o
+	$(CC) -o rod_traversal $^ $(CFLAGS)
+
 light_reverse_kin: inverse_kinematics_lightweight.o llist.o vector_ops.o
 	$(CC) -o light_reverse_kin $^ $(CFLAGS)
 
@@ -46,3 +49,9 @@ profile_reverse_kin: inverse_kinematics.c llist.c vector_ops.c
 
 debug_ray_trace: ray_trace.c ray_test.c vector_ops.c
 	$(CC) -o debug_ray_trace $^ $(CDBGFLAGS)
+
+classical_pet: classical_pet.o llist.o vector_ops.o
+	$(CC) -o classical_pet $^ $(CFLAGS)
+
+debug_classical_pet: classical_pet.c llist.c vector_ops.c
+	$(CC) -o debug_classical_pet $^ $(CDBGFLAGS)
