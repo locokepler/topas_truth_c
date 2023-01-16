@@ -26,9 +26,10 @@
 #define MODULE_SEPERATION 3 // min number of modules separation for trigger
 #define NEVER_CUT 0
 
-#define TIME_UNCERT_CM 6.5
-#define SPC_UNCERT 0.01
+#define TIME_UNCERT_CM 6.36 // in cm for one sigma, NOT ps or ns FWHM
+#define SPC_UNCERT 0.01 //cm
 #define UNCERT_REP 12
+#define E_PER_SWITCH 5.0
 
 
 #define READ_DEBUG 0
@@ -1441,12 +1442,12 @@ llist* build_scatters(llist* detector_history, int id) {
 					scatter* add_scatter;
 					if (ele_dir == NULL) {
 						
-						add_scatter = new_scatter(scatter_loc, NULL, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, TIME_UNCERT_CM);
+						add_scatter = new_scatter(scatter_loc, NULL, cur_event->energy, cur_event->tof, sqrt(cur_event->energy / E_PER_SWITCH) * E_PER_SWITCH, SPC_UNCERT, TIME_UNCERT_CM);
 					} else {
 						// normalize the electron direction
 						vec3d* ele_dir_norm = vec_norm(ele_dir);
 						free(ele_dir);
-						add_scatter = new_scatter(scatter_loc, ele_dir_norm, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, TIME_UNCERT_CM);
+						add_scatter = new_scatter(scatter_loc, ele_dir_norm, cur_event->energy, cur_event->tof, sqrt(cur_event->energy / E_PER_SWITCH) * E_PER_SWITCH, SPC_UNCERT, TIME_UNCERT_CM);
 					}
 					scatter_truth* truth_info = (scatter_truth*)malloc(sizeof(scatter_truth));
 					truth_info->true_eng = cur_event->energy;
@@ -1469,7 +1470,9 @@ llist* build_scatters(llist* detector_history, int id) {
 					dist_var *= SPC_UNCERT;
 					time_var *= TIME_UNCERT_CM / SPD_LGHT;
 					// distance and time now have their variation size
-					double dist_theta = PI * drand48();
+					// double dist_theta = PI * drand48(); // this seems ok but
+					// gives a higher density of results near the poles!
+					double dist_theta = (2 * acos((2.0 * drand48()) - 1.0)) - PI;
 					double dist_phi = 2 * PI * drand48();
 					// distance variation direction
 					double dist_x = dist_var * cos(dist_phi) * sin(dist_theta);
@@ -1483,7 +1486,13 @@ llist* build_scatters(llist* detector_history, int id) {
 					// distance variation set
 					add_scatter->time += time_var;
 					// done adding time randomness
-					add_scatter->deposit += (eng_var * add_scatter->eng_uncert);
+					// find the new energy (after blurring)
+					double new_eng = (eng_var * add_scatter->eng_uncert) + add_scatter->deposit;
+					// discretize the energy value to line up with the number of
+					// switched dye molecules
+					int switched_mol = (int)round(new_eng / E_PER_SWITCH);
+					add_scatter->eng_uncert = sqrt((double)switched_mol) * E_PER_SWITCH;
+					add_scatter->deposit = ((double)switched_mol) * E_PER_SWITCH;
 					// done adding energy randomness
 					// done adding random variation
 					if (add_scatter->deposit <= MIN_SCAT_ENG) {
@@ -2089,7 +2098,7 @@ int main(int argc, char **argv) {
 		printf("Unable to run. Expected at least 3 arguments got %i.\n", argc - 1);
 		printf("Expects an input detector volume ");
 		printf("history file, output file name, and");
-		printf(" energy cutoff percent. Can be followed by -b for reading binary files\n");
+		printf(" FOM cutoff. Can be followed by -b for reading binary files\n");
 		return 1;
 	}
 	// FILE* in_histories = fopen(argv[1], "r");
