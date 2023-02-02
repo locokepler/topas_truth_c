@@ -568,18 +568,21 @@ void add_lor(render* universe, lor* lor) {
 				free(cur_space);
 				if ((longitudinal < (universe->cutoff * lor->long_uncert))
 					&& (transverse < (universe->cutoff * lor->transverse_uncert))) {
-					// we are within the processing column (area of useful adding values)
 					double lon_deviation = longitudinal / lor->long_uncert;
 					double trans_deviation = transverse / lor->transverse_uncert;
-					double lon_normal = long_func(lor->long_uncert, lon_deviation);
-					double trans_normal = centered_normal(lor->transverse_uncert, trans_deviation);
-					double total_value = lon_normal * trans_normal * attenuation;
+					if ((universe->cutoff * universe->cutoff) <= 
+						(lon_deviation + trans_deviation) * (lon_deviation + trans_deviation)) {
+						// we are within the processing column (area of useful adding values)
+						double lon_normal = long_func(lor->long_uncert, lon_deviation);
+						double trans_normal = centered_normal(lor->transverse_uncert, trans_deviation);
+						double total_value = lon_normal * trans_normal * attenuation;
 
-					int index[3] = {i,j,k};
+						int index[3] = {i,j,k};
 
-					pthread_mutex_lock(&volume_lock);
-					universe->combiner(universe, total_value, index, attenuation);
-					pthread_mutex_unlock(&volume_lock);
+						pthread_mutex_lock(&volume_lock);
+						universe->combiner(universe, total_value, index, attenuation);
+						pthread_mutex_unlock(&volume_lock);
+					}
 				}
 			}
 		}
