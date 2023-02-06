@@ -10,15 +10,20 @@
 
 #define MAX_THREAD_CALLS 4
 
+#define NORMAL_TABLE_SIZE 10000
+
 pthread_t tid[MAX_THREAD_CALLS];
 pthread_mutex_t volume_lock;
 
 geometry* objects = NULL;
 
-double (*long_func)(double, double) = NULL;
+double (*long_func)(double) = NULL;
 
 double long_adjust = 1.0;
 double trans_adjust = 1.0;
+
+unsigned long long int gauss_lookup_success = 0;
+unsigned long long int gauss_lookup_fail = 0;
 
 typedef struct _intvec {
 	int a;
@@ -461,17 +466,39 @@ vec3d* lor_box_offset(lor* lor, double cutoff_sigma) {
 
 
 // returns the value of the normal distribution. Normalized to be 1 at x=0.
-double centered_normal(double sigma, double x) {
-	double fraction = x / sigma;
-	double exponent = -0.5 * (fraction * fraction);
-	return exp(exponent);
+// x is value/sigma in a gaussian distribution. i.e. it already has been divided
+// by sigma
+double centered_normal(double x) {
+	static double table[NORMAL_TABLE_SIZE];
+	static int first_run = 0;
+	static double conversion;
+	// if this is our first run of the centered normal function we need to build
+	// the truth table. We will build it from 0 to the cutoff of the renderer
+	if (!first_run) {
+		conversion = NORMAL_TABLE_SIZE / master_copy->cutoff;
+		for (int i = 0; i < NORMAL_TABLE_SIZE; i++) {
+			double fraction = (double)i / conversion;
+			table[i] = exp(-0.5 * (fraction * fraction));
+		}
+		first_run = 1;
+	}
+	double fraction = fabs(x);
+	if (fraction >= master_copy->cutoff) {
+		// outside the volume of table
+		gauss_lookup_fail++;
+		double exponent = -0.5 * (fraction * fraction);
+		return exp(exponent);
+	}
+	// just look it up!
+	gauss_lookup_success++;
+	return table[(int)(fraction * conversion)];
 }
-double centered_binary(double sigma, double x) {
+double centered_binary(double x) {
 	return 1.0;
 }
 
-double centered_laplace(double sigma, double x) {
-	double fraction = x / sigma;
+double centered_laplace(double x) {
+	double fraction = x;
 	double exponent = fabs(fraction);
 	return exp(exponent);
 }
@@ -570,11 +597,11 @@ void add_lor(render* universe, lor* lor) {
 					&& (transverse < (universe->cutoff * lor->transverse_uncert))) {
 					double lon_deviation = longitudinal / lor->long_uncert;
 					double trans_deviation = transverse / lor->transverse_uncert;
-					if ((universe->cutoff * universe->cutoff) <= 
-						(lon_deviation + trans_deviation) * (lon_deviation + trans_deviation)) {
+					if ((universe->cutoff * universe->cutoff) > 
+						(lon_deviation * lon_deviation) + (trans_deviation * trans_deviation)) {
 						// we are within the processing column (area of useful adding values)
-						double lon_normal = long_func(lor->long_uncert, lon_deviation);
-						double trans_normal = centered_normal(lor->transverse_uncert, trans_deviation);
+						double lon_normal = long_func(lon_deviation);
+						double trans_normal = centered_normal(trans_deviation);
 						double total_value = lon_normal * trans_normal * attenuation;
 
 						int index[3] = {i,j,k};
@@ -784,8 +811,10 @@ void add_lor_plane(render* universe, lor* lor) {
 					// longitudinal distance from the lor center to the point
 					if (longitudinal < (universe->cutoff * lor->long_uncert)) {
 						// we are within the processing column (area of useful adding values)
-						double lon_normal = long_func(lor->long_uncert, longitudinal);
-						double trans_normal = centered_normal(lor->transverse_uncert, transverse);
+						double long_deviation = longitudinal / lor->long_uncert;
+						double lon_normal = long_func(long_deviation);
+						double trans_deviation = transverse / lor->transverse_uncert;
+						double trans_normal = centered_normal(trans_deviation);
 						double total_value = lon_normal * trans_normal * attenuation;
 
 						int index[3] = {i,j,k};
@@ -977,12 +1006,13 @@ int main(int argc, char const *argv[])
 			tid[cur_thread] = -1;
 		}
 		// add_lor(master_copy, operative_lor);
+		add_lor_plane(master_copy, operative_lor);
 
 		// lets make this multithreaded
-		struct _add_lor_union *arguments = (struct _add_lor_union *)malloc(sizeof(struct _add_lor_union));
-		arguments->universe = master_copy;
-		arguments->lor = operative_lor;
-		pthread_create(&tid[cur_thread], NULL, wrapper_add_lor, arguments);
+		// struct _add_lor_union *arguments = (struct _add_lor_union *)malloc(sizeof(struct _add_lor_union));
+		// arguments->universe = master_copy;
+		// arguments->lor = operative_lor;
+		// pthread_create(&tid[cur_thread], NULL, wrapper_add_lor_plane, arguments);
 		// pthread_create(&tid[cur_thread], NULL, wrapper_add_lor_plane, arguments);
 
 		operative_lor = read_lor(input_lor);
@@ -992,7 +1022,7 @@ int main(int argc, char const *argv[])
 		} else {
 			cur_thread = 0;
 		}
-		if (1000 * (iteration / 1000) == iteration) {
+		if (100000 * (iteration / 100000) == iteration) {
 			printf("iteration %i\n", iteration);
 		}
 	}
@@ -1000,6 +1030,8 @@ int main(int argc, char const *argv[])
 	FILE* output = fopen(argv[3], "w");
 
 	print_volume(output, master_copy);
+
+	printf("Gaussian lookup table:\n\tFails: %llu\n\tSuccesses: %llu\n", gauss_lookup_fail, gauss_lookup_success);
 
 	pthread_mutex_destroy(&volume_lock);
 
