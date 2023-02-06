@@ -26,11 +26,10 @@
 #define MODULE_SEPERATION 3 // min number of modules separation for trigger
 #define NEVER_CUT 0
 
-#define TIME_UNCERT_CM 6.36 // in cm for one sigma, NOT ps or ns FWHM
-#define SPC_UNCERT 0.01 //cm
+double time_uncert_cm = 6.36; // in cm for one sigma, NOT ps or ns FWHM
+double spc_uncert = 0.01; // cm
 #define UNCERT_REP 12
-#define E_PER_SWITCH 5.0
-
+double E_per_switch = 1.0; // keV/switch
 
 #define READ_DEBUG 0
 #define GENERAL_DEBUG 0
@@ -662,6 +661,7 @@ double expected_uncert_b(double b, double theta, double uncert_b, double uncert_
 		// also it appears this scatter was non-physical. Honestly how did you
 		// get here? you added two (theoretically) positive numbers and got a
 		// negative one
+		// fprintf(stderr, "expected_energy_b: negative determinator\n");
 		return -1.;
 	}
 	double gamma_to_b_e = (b->deposit + sqrt(determinator)) / 2.; // the energy of the
@@ -1442,12 +1442,12 @@ llist* build_scatters(llist* detector_history, int id) {
 					scatter* add_scatter;
 					if (ele_dir == NULL) {
 						
-						add_scatter = new_scatter(scatter_loc, NULL, cur_event->energy, cur_event->tof, sqrt(cur_event->energy / E_PER_SWITCH) * E_PER_SWITCH, SPC_UNCERT, TIME_UNCERT_CM);
+						add_scatter = new_scatter(scatter_loc, NULL, cur_event->energy, cur_event->tof, sqrt(cur_event->energy / E_per_switch) * E_per_switch, spc_uncert, time_uncert_cm);
 					} else {
 						// normalize the electron direction
 						vec3d* ele_dir_norm = vec_norm(ele_dir);
 						free(ele_dir);
-						add_scatter = new_scatter(scatter_loc, ele_dir_norm, cur_event->energy, cur_event->tof, sqrt(cur_event->energy / E_PER_SWITCH) * E_PER_SWITCH, SPC_UNCERT, TIME_UNCERT_CM);
+						add_scatter = new_scatter(scatter_loc, ele_dir_norm, cur_event->energy, cur_event->tof, sqrt(cur_event->energy / E_per_switch) * E_per_switch, spc_uncert, time_uncert_cm);
 					}
 					scatter_truth* truth_info = (scatter_truth*)malloc(sizeof(scatter_truth));
 					truth_info->true_eng = cur_event->energy;
@@ -1467,8 +1467,8 @@ llist* build_scatters(llist* detector_history, int id) {
 					dist_var -= ((float)(UNCERT_REP) * 0.5);
 					time_var -= ((float)(UNCERT_REP) * 0.5);
 					eng_var  -= ((float)(UNCERT_REP) * 0.5);
-					dist_var *= SPC_UNCERT;
-					time_var *= TIME_UNCERT_CM / SPD_LGHT;
+					dist_var *= spc_uncert;
+					time_var *= time_uncert_cm / SPD_LGHT;
 					// distance and time now have their variation size
 					// double dist_theta = PI * drand48(); // this seems ok but
 					// gives a higher density of results near the poles!
@@ -1490,9 +1490,9 @@ llist* build_scatters(llist* detector_history, int id) {
 					double new_eng = (eng_var * add_scatter->eng_uncert) + add_scatter->deposit;
 					// discretize the energy value to line up with the number of
 					// switched dye molecules
-					int switched_mol = (int)round(new_eng / E_PER_SWITCH);
-					add_scatter->eng_uncert = sqrt((double)switched_mol) * E_PER_SWITCH;
-					add_scatter->deposit = ((double)switched_mol) * E_PER_SWITCH;
+					int switched_mol = (int)round(new_eng / E_per_switch);
+					add_scatter->eng_uncert = sqrt((double)switched_mol) * E_per_switch;
+					add_scatter->deposit = ((double)switched_mol) * E_per_switch;
 					// done adding energy randomness
 					// done adding random variation
 					if (add_scatter->deposit <= MIN_SCAT_ENG) {
@@ -2109,10 +2109,41 @@ int main(int argc, char **argv) {
 	FILE* in_det_histories;
 	int binary = 0;
 	if (argc > 4) {
+		// go check all of the following flags!
 		for (int i = 1; i < argc; i++) {
 			if (!strcasecmp(argv[i], "-b")) {
 				// binary flag
 				binary = 1;
+			}
+			if (!strcasecmp(argv[i], "-E")) {
+				// change energy per scatter
+				if (argc > (i + 1)) {
+					E_per_switch = strtod(argv[i+1], NULL);
+					printf("Energy per switch set to %lf keV/switch\n", E_per_switch);
+				} else {
+					fprintf(stderr, "-E flag not followed by float!\n");
+					return 1;
+				}
+			}
+			if (!strcasecmp(argv[i], "-s")) {
+				// change spatial resolution
+				if (argc > (i + 1)) {
+					spc_uncert = strtod(argv[i+1], NULL);
+					printf("Spatial resolution set to %lf cm\n", spc_uncert);
+				} else {
+					fprintf(stderr, "-s flag not followed by float!\n");
+					return 1;
+				}
+			}
+			if (!strcasecmp(argv[i], "-t")) {
+				// change energy per scatter
+				if (argc > (i + 1)) {
+					time_uncert_cm = strtod(argv[i+1], NULL);
+					printf("Time resolution set to %lf cm\n", time_uncert_cm);
+				} else {
+					fprintf(stderr, "-t flag not followed by float!\n");
+					return 1;
+				}
 			}
 		}
 	}
