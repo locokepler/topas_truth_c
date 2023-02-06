@@ -8,12 +8,26 @@
 #include "ray_trace.h"
 #include "llist.h"
 
-#define MAX_THREAD_CALLS 4
+#define MAX_THREADS 4
 
 #define NORMAL_TABLE_SIZE 10000
 
-pthread_t tid[MAX_THREAD_CALLS];
+pthread_t tid[MAX_THREADS];
 pthread_mutex_t volume_lock;
+
+struct _add_lor_union {
+	render* universe;
+	lor* lor;
+	pthread_mutex_t lock;
+	pthread_cond_t cond;
+	char flag;
+	char die;
+};
+
+
+struct _add_lor_union working_lors[MAX_THREADS];
+pthread_cond_t main_hold;
+pthread_mutex_t main_lock;
 
 geometry* objects = NULL;
 
@@ -872,10 +886,6 @@ void print_volume(FILE* output, render* universe) {
 	}
 }
 
-struct _add_lor_union {
-	render* universe;
-	lor* lor;
-};
 
 void* wrapper_add_lor(void *a) {
 	struct _add_lor_union *open = (struct _add_lor_union *)a;
@@ -890,6 +900,44 @@ void* wrapper_add_lor_plane(void *a) {
 	add_lor_plane(open->universe, open->lor);
 	free_lor(open->lor);
 	free(open);
+	return 0;
+}
+
+
+// takes in a universe, location of a lor, location of the update flag, and
+// the location of the thread's lock.
+// runs as a long term loop getting new lors put into the location it knows to
+// look. If the die flag is set to true it stops trying to run and exits after
+// running the current lor.
+void* long_life_thread_add_lor_plane(void *a) {
+	struct _add_lor_union *home = (struct _add_lor_union *)a;
+	int die = 0;
+	lor* tick_lor = NULL;
+
+	while (!die) {
+		// actions to take in the main tick loop
+		// check if there is a new LOR to act on
+		pthread_mutex_lock(&(home->lock));
+		die = home->die;
+		if (!home->flag) {
+			// nothing this check
+			// time to wait for an update
+			pthread_cond_wait(&(home->cond), &(home->lock));
+			pthread_mutex_unlock(&(home->lock));
+			pthread_cond_signal(&main_hold);
+		} else {
+			// we have a new lor to check out
+			tick_lor = home->lor;
+			home->flag = 0;
+			pthread_mutex_unlock(&(home->lock));
+			pthread_cond_signal(&main_hold);
+			// now lets run using this new lor
+			if (tick_lor != NULL) {
+				add_lor_plane(home->universe, tick_lor);
+				free_lor(tick_lor);
+			}
+		}
+	}
 	return 0;
 }
 
@@ -991,22 +1039,59 @@ int main(int argc, char const *argv[])
 		return(1);
 	}
 
-	for (int i = 0; i < MAX_THREAD_CALLS; i++) {
+	for (int i = 0; i < MAX_THREADS; i++) {
 		// set the array of threads to be empty
 		tid[i] = -1;
+		working_lors[i].lor = NULL;
+		working_lors[i].die = 0;
+		working_lors[i].flag = 0;
+		working_lors[i].universe = master_copy;
+		pthread_cond_init(&(working_lors[i].cond), NULL);
+		if (pthread_mutex_init(&(working_lors[i].lock), NULL)) {
+			fprintf(stderr, "pthread: unable to make update lock, exiting.\n");
+			return(1);
+		}
+		pthread_create(&tid[i], NULL, long_life_thread_add_lor_plane, &(working_lors[i]));
 	}
+	pthread_cond_init(&main_hold, NULL);
+	pthread_mutex_init(&main_lock, NULL);
 
 	uint iteration = 0;
 	lor* operative_lor = read_lor(input_lor);
 
 	int cur_thread = 0;
 	while (operative_lor != NULL) {
-		if (tid[cur_thread] != -1) {
-			pthread_join(tid[cur_thread], NULL);
-			tid[cur_thread] = -1;
+		int cont = 0;
+		while (!cont) {
+			for (int i = 0; (i < MAX_THREADS) && (cont == 0); i++) {
+				// work our way through the threads, updating the next avaliable one
+				// with our current LOR.
+				pthread_mutex_lock(&(working_lors[i].lock));
+				// lock it so we can have a look
+				if (!working_lors[i].flag) {
+					// the thread already grabbed a lor to work on, time to point to
+					// the new one
+					working_lors[i].lor = operative_lor;
+					working_lors[i].flag = 1;
+					// wake the thread back up if it had been suspended
+					pthread_cond_signal(&(working_lors[i].cond));
+					cont = 1;
+				}
+				pthread_mutex_unlock(&(working_lors[i].lock));
+			}
+			if (!cont) {
+				pthread_mutex_lock(&main_lock);
+				pthread_cond_wait(&main_hold, &main_lock);
+				pthread_mutex_unlock(&main_lock);
+			}
 		}
-		// add_lor(master_copy, operative_lor);
-		add_lor_plane(master_copy, operative_lor);
+		
+		// if (tid[cur_thread] != -1) {
+		// 	pthread_join(tid[cur_thread], NULL);
+		// 	tid[cur_thread] = -1;
+		// }
+		// // add_lor(master_copy, operative_lor);
+		// add_lor_plane(master_copy, operative_lor);
 
 		// lets make this multithreaded
 		// struct _add_lor_union *arguments = (struct _add_lor_union *)malloc(sizeof(struct _add_lor_union));
@@ -1017,7 +1102,7 @@ int main(int argc, char const *argv[])
 
 		operative_lor = read_lor(input_lor);
 		iteration++;
-		if (cur_thread + 1 < MAX_THREAD_CALLS) {
+		if (cur_thread + 1 < MAX_THREADS) {
 			cur_thread++;
 		} else {
 			cur_thread = 0;
