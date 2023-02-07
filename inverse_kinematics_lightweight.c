@@ -2223,6 +2223,7 @@ int main(int argc, char **argv) {
 			fprintf(lor_output, "%i, ", ((event*)(in_det_hist->data))->number);
 			print_lor(lor_output, result);
 			fprintf(lor_output, "\n");
+			free_lor(result);
 		}
 		if (endpoints != NULL) {
 			delete_scatter(endpoints[0]);
