@@ -14,7 +14,7 @@
 #define COMP_INT 1667457891
 #define ELECTRON_MASS 510.999
 #define SPD_LGHT 29.98
-#define PI 3.1415
+#define PI 3.141592653589
 #define FIRST_N 5
 #define LARGEST 10
 #define SKIP 0
@@ -957,6 +957,8 @@ scatter* multi_gamma_iterator(llist* history1, llist* history2, double energy_pe
 	return NULL;
 }
 
+// dot product of vector first->second locations and the electron direction
+// at second
 double scatter_dir_dot(scatter* first, scatter* second) {
 	if (second->dir == NULL) {
 		return -1;
@@ -987,8 +989,8 @@ double scatter_dir_dot(scatter* first, scatter* second) {
  * 
  * energy_percent: what the percentage cut is for acceptable scattering
  */
-scatter* multi_gamma_ele_iterator(llist* history1, llist* history2, double energy_percent) {
-	if ((history1 == NULL) || (history2 == NULL)) {
+scatter* multi_gamma_ele_iterator(llist* history_near, llist* history_far, double energy_percent) {
+	if ((history_near == NULL) || (history_far == NULL)) {
 		fprintf(stderr, "multi_gamma_ele_iterator: empty history given");
 		return NULL;
 	}
@@ -1000,29 +1002,29 @@ scatter* multi_gamma_ele_iterator(llist* history1, llist* history2, double energ
 
 	scatter* best_scatter = NULL;
 
-	int len_hist1 = list_length(history1);
-	int len_hist2 = list_length(history2);
+	int len_hist_near = list_length(history_near);
+	int len_hist_far = list_length(history_far);
 
-	if (len_hist1 < 2) {
+	if (len_hist_near < 2) {
 		// history1 is too short to run the iteration process.
 		return NULL;
 	}
-	if (len_hist2 < 1) {
+	if (len_hist_far < 1) {
 		// idk if it is possible to even get here, but we can't continue if we do
 		return NULL;
 	}
 
 	// time to turn the scattering list into an array for fast access
-	scatter** scatters1 = (scatter**)malloc(len_hist1 * sizeof(scatter*));
-	for (int i = 0; i < len_hist1; i++)	{
-		scatters1[i] = (scatter*)history1->data;
-		history1 = history1->down;
+	scatter** scatters_near = (scatter**)malloc(len_hist_near * sizeof(scatter*));
+	for (int i = 0; i < len_hist_near; i++)	{
+		scatters_near[i] = (scatter*)history_near->data;
+		history_near = history_near->down;
 	}
 
-	scatter** scatters2 = (scatter**)malloc(len_hist2 * sizeof(scatter*));
-	for (int i = 0; i < len_hist2; i++)	{
-		scatters2[i] = (scatter*)history2->data;
-		history2 = history2->down;
+	scatter** scatters_far = (scatter**)malloc(len_hist_far * sizeof(scatter*));
+	for (int i = 0; i < len_hist_far; i++)	{
+		scatters_far[i] = (scatter*)history_far->data;
+		history_far = history_far->down;
 	}
 
 	// a couple of variables for debug information
@@ -1032,23 +1034,23 @@ scatter* multi_gamma_ele_iterator(llist* history1, llist* history2, double energ
 	// time to iterate over all of the possible combinations. The avaliable
 	// configurations are:
 	// for all i in len_hist2 and all of j != k in len_hist1
-	for (int i = 0; i < len_hist2; i++) {
-		for (int j = 0; j < len_hist1; j++) {
-			double i_j_dot = scatter_dir_dot(scatters2[i], scatters1[j]);
-			vec3d* in = vec_sub(scatters2[i]->loc, scatters1[j]->loc);
-			for (int k = 0; k < len_hist1; k++) {
+	for (int i = 0; i < len_hist_far; i++) {
+		for (int j = 0; j < len_hist_near; j++) {
+			double i_j_dot = scatter_dir_dot(scatters_far[i], scatters_near[j]);
+			vec3d* in = vec_sub(scatters_far[i]->loc, scatters_near[j]->loc);
+			for (int k = 0; k < len_hist_near; k++) {
 				// can only do 3 point checks with j and k not being the same
 				if (j != k) {
 					// first check if the direction is physical
 					if (((i_j_dot <= 0) && (i_j_dot != -1)) &&
-							(scatter_dir_dot(scatters1[k], scatters1[j]) <= 0)) {
-						vec3d* out = vec_sub(scatters1[j]->loc, scatters1[k]->loc);
+							(scatter_dir_dot(scatters_near[k], scatters_near[j]) <= 0)) {
+						vec3d* out = vec_sub(scatters_near[j]->loc, scatters_near[k]->loc);
 						vec3d* gamma_cross = vec_cross(in, out);
 						vec3d* gamma_cross_norm = vec_norm(gamma_cross);
 						if (gamma_cross != NULL) {
 							free(gamma_cross);
 						}
-						vec3d* ele_dir = vec_norm(scatters1[j]->dir);
+						vec3d* ele_dir = vec_norm(scatters_near[j]->dir);
 						vec3d* plane = vec_cross(gamma_cross_norm, ele_dir);
 						if (ele_dir != NULL)
 							free(ele_dir);
@@ -1059,19 +1061,19 @@ scatter* multi_gamma_ele_iterator(llist* history1, llist* history2, double energ
 
 						if ((plane == NULL) || (vec_mag(plane) > 0.0)) {
 
-							hypoth = expected_energy_b(scatters2[i], scatters1[j], scatters1[k], NULL);
+							hypoth = expected_energy_b(scatters_far[i], scatters_near[j], scatters_near[k], NULL);
 							// check if the hypothesis is better than previous
 							if (fabs(hypoth - ELECTRON_MASS) < fabs(best_find - ELECTRON_MASS)) {
 								// the current hypthesis is better than the previous best
 								if (GENERAL_DEBUG) {
 									printf("multi_gamma_ele_iterator: new best scatter found:\n");
 									printf("%f keV at ", hypoth);
-									vec_print(scatters1[j]->loc, stdout);
+									vec_print(scatters_near[j]->loc, stdout);
 									printf("\n");
 								}
 								// second_best = best_find;
 								best_find = hypoth;
-								best_scatter = scatters1[j];
+								best_scatter = scatters_near[j];
 								// predicted_vs_real[2 * (run_num - 1)] = j + 1;
 								// predicted_vs_real[2 * (run_num - 1) + 1] = k + 1;
 							}				
@@ -1090,8 +1092,8 @@ scatter* multi_gamma_ele_iterator(llist* history1, llist* history2, double energ
 	// 	second_scat_hypot = fabs(best_find - second_best);
 	// }
 
-	free(scatters1);
-	free(scatters2);
+	free(scatters_near);
+	free(scatters_far);
 	// done iterating, now have the best scatter found in the list
 	if (fabs(best_find - ELECTRON_MASS) < (energy_percent * ELECTRON_MASS)) {
 		// the result was within the energy cut
@@ -1126,7 +1128,7 @@ scatter** build_array_no_i(scatter** source, uint source_len, uint i) {
 }
 
 double recursive_search(double best, double current, double inc_eng, double inc_uncert, scatter* origin, scatter* loc, scatter** remaining, uint remain_count) {
-	if ((loc == NULL) || (remaining == NULL) || (origin == NULL) ||(remain_count == 0)) {
+	if ((loc == NULL) || (remaining == NULL) || (origin == NULL) || (remain_count <= SKIP)) {
 		return current;
 	}
 	if (best < current) {
@@ -1191,7 +1193,9 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 		// not a result issue, just a speed one, so leaving for now
 			// time to go one layer further
 			scatter** new_array = build_array_no_i(remaining, remain_count, i);
+
 			double below = recursive_search(best, combined_error, new_energy, new_eng_uncert, loc, remaining[i], new_array, remain_count - 1);
+			
 
 			free(new_array);
 			if (below < better_find) {
@@ -1222,7 +1226,7 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 	int len_hist_near = list_length(history_near);
 	int len_hist_far = list_length(history_far);
 
-	double best_find = sigma_per_scatter * len_hist_near;
+	double best_find = sigma_per_scatter * (len_hist_near - SKIP);
 
 	if (len_hist_near < 2) {
 		// history1 is too short to run the recursion process.
@@ -1283,9 +1287,9 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 	}
 
 	// sorts the scatters by deposit energy, now only keep the largest LARGEST
-	scatter** scatters_near_short = (scatter**)malloc(LARGEST * sizeof(scatter*));
-	scatter** scatters_far_short = (scatter**)malloc(LARGEST * sizeof(scatter*));
-	for (int i = 0; i < LARGEST; i++) {
+	scatter** scatters_near_short = (scatter**)malloc((LARGEST + SKIP) * sizeof(scatter*));
+	scatter** scatters_far_short = (scatter**)malloc((LARGEST + SKIP) * sizeof(scatter*));
+	for (int i = 0; i < LARGEST + SKIP; i++) {
 		if (i >= len_hist_near) {
 			scatters_near_short[i] = NULL;
 		} else {
@@ -1297,11 +1301,11 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 			scatters_far_short[i] = scatters_far[i];
 		}
 	}
-	if (len_hist_near > LARGEST) {
-		len_hist_near = LARGEST;
+	if (len_hist_near > LARGEST + SKIP) {
+		len_hist_near = LARGEST + SKIP;
 	}
-	if (len_hist_far > LARGEST) {
-		len_hist_far = LARGEST;
+	if (len_hist_far > LARGEST + SKIP) {
+		len_hist_far = LARGEST + SKIP;
 	}
 
 
@@ -2101,12 +2105,6 @@ int main(int argc, char **argv) {
 		printf(" FOM cutoff. Can be followed by -b for reading binary files\n");
 		return 1;
 	}
-	// FILE* in_histories = fopen(argv[1], "r");
-	// if (in_histories == NULL) {
-	// 	printf("Unable to open history file\n");
-	// 	return 1;
-	// }
-	FILE* in_det_histories;
 	int binary = 0;
 	if (argc > 4) {
 		// go check all of the following flags!
@@ -2147,13 +2145,13 @@ int main(int argc, char **argv) {
 			}
 		}
 	}
-	// if (binary) {
-	in_det_histories = fopen(argv[1], "r");
-	// } else {
-		// in_det_histories = fopen(argv[1], "r");
+	// FILE* in_histories = fopen(argv[1], "r");
+	// if (in_histories == NULL) {
+	// 	printf("Unable to open history file\n");
+	// 	return 1;
 	// }
+	FILE* in_det_histories = fopen(argv[1], "r");
 
-	// FILE* in_det_histories = fopen(argv[1], "r");
 	if (in_det_histories == NULL) {
 		printf("Unable to open detector history file\n");
 		return 1;
@@ -2236,7 +2234,8 @@ int main(int argc, char **argv) {
 			in_det_hist = load_historyb(in_det_histories, read_line_binary);
 		} else {
 			in_det_hist = load_historyb(in_det_histories, read_line);
-		}		run_num++;
+		}
+		run_num++;
 
 		// if (cur_thread + 1 < MAX_THREAD_CALLS) {
 		// 	cur_thread++;
