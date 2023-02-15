@@ -27,7 +27,7 @@
 #define NEVER_CUT 0
 
 double time_uncert_cm = 6.36; // in cm for one sigma, NOT ps or ns FWHM
-double spc_uncert = 0.01; // cm
+double spc_uncert = 0.1; // cm
 #define UNCERT_REP 12
 double E_per_switch = 1.0; // keV/switch
 
