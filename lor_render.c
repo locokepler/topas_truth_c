@@ -38,6 +38,8 @@ double trans_adjust = 1.0;
 
 unsigned long long int gauss_lookup_success = 0;
 unsigned long long int gauss_lookup_fail = 0;
+long int not_added = 0;
+long int iterated = 0;
 
 typedef struct _intvec {
 	int a;
@@ -116,10 +118,10 @@ void print_lor(FILE* output, lor* lor) {
 // takes a render (for the array), a double to add to it, and the location to
 // do so. The indexes array should be of length 3, an x, y, and z coord.
 // does basic addition of doubles
-void add_double(render* u, double x, int* indexes, double arg) {
+void add_double(render* u, double x, int* indexes, double atten) {
 	u->volume[indexes[0] * u->dimensions[1] * u->dimensions[2]
 				+ indexes[1] * u->dimensions[2]
-				+ indexes[2]] += x;
+				+ indexes[2]] += x * atten;
 	return;
 }
 
@@ -496,16 +498,17 @@ double centered_normal(double x) {
 		}
 		first_run = 1;
 	}
-	double fraction = fabs(x);
-	if (fraction >= master_copy->cutoff) {
+	double fraction = x;
+	// double fraction = fabs(x);
+	// if (fraction >= master_copy->cutoff) {
 		// outside the volume of table
-		gauss_lookup_fail++;
+		// gauss_lookup_fail++;
 		double exponent = -0.5 * (fraction * fraction);
 		return exp(exponent);
-	}
+	// }
 	// just look it up!
-	gauss_lookup_success++;
-	return table[(int)(fraction * conversion)];
+	// gauss_lookup_success++;
+	// return table[(int)(fraction * conversion)];
 }
 double centered_binary(double x) {
 	return 1.0;
@@ -616,7 +619,7 @@ void add_lor(render* universe, lor* lor) {
 						// we are within the processing column (area of useful adding values)
 						double lon_normal = long_func(lon_deviation);
 						double trans_normal = centered_normal(trans_deviation);
-						double total_value = lon_normal * trans_normal * attenuation;
+						double total_value = lon_normal * trans_normal;
 
 						int index[3] = {i,j,k};
 
@@ -637,6 +640,10 @@ void add_lor(render* universe, lor* lor) {
  * each iteration of the third axis
  */
 void add_lor_plane(render* universe, lor* lor) {
+
+	int did_we_add_this = 0;
+	int did_we_iterate = 0;
+
 	if (universe == NULL || lor == NULL) {
 		return;
 	}
@@ -826,12 +833,13 @@ void add_lor_plane(render* universe, lor* lor) {
 					if (longitudinal < (universe->cutoff * lor->long_uncert)) {
 						// we are within the processing column (area of useful adding values)
 						double long_deviation = longitudinal / lor->long_uncert;
-						double lon_normal = long_func(long_deviation);
+						double lon_normal = centered_normal(long_deviation);
 						double trans_deviation = transverse / lor->transverse_uncert;
 						double trans_normal = centered_normal(trans_deviation);
-						double total_value = lon_normal * trans_normal * attenuation;
+						double total_value = lon_normal * trans_normal;
 
 						int index[3] = {i,j,k};
+						did_we_add_this = 1;
 
 						pthread_mutex_lock(&volume_lock);
 						universe->combiner(universe, total_value, index, attenuation);
@@ -840,11 +848,24 @@ void add_lor_plane(render* universe, lor* lor) {
 				}
 				free(cur_vox);
 				free(cur_space);
+				did_we_iterate = 1;
 			}
 		}
 	}
 	free(high_corner_vox);
 	free(low_corner_vox);
+	if (did_we_iterate) {
+		if (!did_we_add_this) {
+			pthread_mutex_lock(&volume_lock);
+			not_added++;
+			iterated++;
+			pthread_mutex_unlock(&volume_lock);
+		} else {
+			pthread_mutex_lock(&volume_lock);
+			iterated++;
+			pthread_mutex_unlock(&volume_lock);
+		}
+	}
 }
 
 void print_definition(render* rend) {
@@ -1002,14 +1023,14 @@ int main(int argc, char const *argv[])
 					printf("put -g flag before path to geometry file\n");
 				}
 			}
-			if (!strncasecmp(argv[i], "-lb", 3)) {
-				long_func = centered_binary;
-				printf("using centered binary for longitudinal\n");
-			}
-			if (!strncasecmp(argv[i], "-ll", 3)) {
-				long_func = centered_laplace;
-				printf("using centered laplace for longitudinal\n");
-			}
+			// if (!strncasecmp(argv[i], "-lb", 3)) {
+			// 	long_func = centered_binary;
+			// 	printf("using centered binary for longitudinal\n");
+			// }
+			// if (!strncasecmp(argv[i], "-ll", 3)) {
+			// 	long_func = centered_laplace;
+			// 	printf("using centered laplace for longitudinal\n");
+			// }
 			if (!strncasecmp(argv[i], "-la", 3)) {
 				if (argc > (i + 1)) {
 					// now set the longitudinal adjustment value
@@ -1117,6 +1138,7 @@ int main(int argc, char const *argv[])
 	print_volume(output, master_copy);
 
 	printf("Gaussian lookup table:\n\tFails: %llu\n\tSuccesses: %llu\n", gauss_lookup_fail, gauss_lookup_success);
+	printf("LORs not added:\n\t%li, fractionally %lf\n", not_added, (double)not_added / (double)iterated);
 
 	pthread_mutex_destroy(&volume_lock);
 
