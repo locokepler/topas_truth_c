@@ -15,6 +15,7 @@
 #define FIRST_N 5
 #define LARGEST 100 // max scatters in a tree
 #define SKIP 0 // number of scatters to skip at end of tree
+#define KEEP_SINGLES 1
 #define MAX_SINGLE_SIGMA 3.0 // max sigma for a scatter to be accepted as possible
 #define MIN_SCAT_ENG 10.0 // minumum energy for a scatter to be observed
 #define E_TRIGGER 20.0 // energy in keV to hit trigger 
@@ -22,9 +23,10 @@
 #define MODULE_SEPERATION 3 // min number of modules separation for trigger
 #define NEVER_CUT 0
 
-#define TIME_UNCERT_CM 5.
-#define SPC_UNCERT 0.05
+double time_uncert_cm = 6.36; // in cm for one sigma, NOT ps or ns FWHM
+double spc_uncert = 0.1; // cm
 #define UNCERT_REP 12
+double E_per_switch = 1.0; // keV/switch
 
 #define READ_DEBUG 0
 #define GENERAL_DEBUG 0
@@ -110,6 +112,59 @@ event* read_line(FILE* source) {
 	return new_event;
 }
 
+// reads an event from a binary file
+
+event* read_line_binary(FILE* source) {
+
+	// begin to fill the event struct with information from .phsp
+	uint numb;
+	double energy;
+	double deposit;
+	float x;
+	float y;
+	float z;
+	float tof;
+	int particle;
+	int count;
+
+	int worked = 0;
+
+	worked += fread(&numb, sizeof(uint), 1, source);
+	worked += fread(&energy, sizeof(double), 1, source);
+	worked += fread(&deposit, sizeof(double), 1, source);
+	worked += fread(&x, sizeof(float), 1, source);
+	worked += fread(&y, sizeof(float), 1, source);
+	worked += fread(&z, sizeof(float), 1, source);
+	worked += fread(&tof, sizeof(float), 1, source);
+	worked += fread(&particle, sizeof(int), 1, source);
+	worked += fread(&count, sizeof(int), 1, source);
+
+	if (worked != 9) {
+		// something went wrong with the read, don't pass bad information
+		return NULL;
+	}
+	
+	// make a new event to be passed out
+	event* new_event = (event*)malloc(sizeof(event));
+	if (new_event == NULL) {
+		return NULL;
+	}
+	new_event->number 		= numb;
+	new_event->energy 		= energy;
+	new_event->deposited 	= deposit;
+	new_event->location 	= three_vec((double)x,(double)y,(double)z);
+	new_event->tof 			= (double)tof;
+	new_event->particle 	= particle;
+	new_event->id			= count;
+	new_event->orgin[0]		= (char)0;
+
+	// if (READ_DEBUG) {
+	// 	print_event((void*)new_event);
+	// }
+
+	return new_event;
+}
+
 // creates a new scatter structure and fills it
 scatter* new_scatter_old(vec3d* vector, double deposited, double time) {
 	scatter* new = (scatter*)malloc(sizeof(scatter));
@@ -138,15 +193,20 @@ scatter* new_scatter(vec3d* vector, vec3d* dir, double deposit, double time, dou
 }
 
 scatter* copy_scatter(scatter* a) {
-	scatter* new = new_scatter(vec_copy(a->loc),vec_copy(a->dir), a->deposit, a->time, a->eng_uncert, a->space_uncert, a->time_uncert);
-	if (a->truth != NULL) {
-		scatter_truth* new_true = (scatter_truth*)malloc(sizeof(scatter_truth));
-		new_true->true_eng  = a->truth->true_eng;
-		new_true->true_n    = a->truth->true_n;
-		new_true->true_time = a->truth->true_time;
-		new->truth = new_true;
+	return new_scatter(vec_copy(a->loc),vec_copy(a->dir), a->deposit, a->time, a->eng_uncert, a->space_uncert, a->time_uncert);
+}
+
+void* delete_scatter(void* in) {
+	if (in == NULL) {
+		return NULL;
 	}
-	return new;
+	free(((scatter*)in)->loc);
+	free(((scatter*)in)->dir);
+	if (((scatter*)in)->truth != NULL) {
+		free(((scatter*)in)->truth);
+	}
+	free(in);
+	return NULL;
 }
 
 event* duplicate_event(event* source) {
@@ -162,19 +222,7 @@ event* duplicate_event(event* source) {
 	return new_event;
 }
 
-// frees scatter malloc
-void* delete_scatter(void* in) {
-	if (in == NULL) {
-		return NULL;
-	}
-	free(((scatter*)in)->loc);
-	free(((scatter*)in)->dir);
-	if (((scatter*)in)->truth != NULL) {
-		free(((scatter*)in)->truth);
-	}
-	free(in);
-	return NULL;
-}
+
 
 // frees event malloc, returns NULL. For fmap
 void* delete_event(void* in) {
@@ -707,7 +755,6 @@ double expected_energy_a(scatter* a, scatter* b, scatter* c) {
 
 }
 
-
 /*
  * test_expected_energy
  * a test suite for the expected energy function to check that it is producing
@@ -1125,7 +1172,7 @@ scatter* multi_gamma_ele_iterator(llist* history_near, llist* history_far, doubl
  * array without the element that was at location i in the source array.
  */
 scatter** build_array_no_i(scatter** source, uint source_len, uint i) {
-	if (source == NULL) {
+	if ((source == NULL) || (source_len <= 1)) {
 		return NULL;
 	}
 	scatter** result = (scatter**)malloc(sizeof(scatter*) * (source_len - 1));
@@ -1330,9 +1377,14 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 	int len_hist_near = list_length(history_near);
 	int len_hist_far = list_length(history_far);
 
+	double best_find = sigma_per_scatter * (len_hist_near - SKIP);
 
 	if (len_hist_near < 2) {
 		// history1 is too short to run the recursion process.
+		if (KEEP_SINGLES && len_hist_near == 1) {
+			// we have a single case
+			return history_near->data;
+		}
 		return NULL;
 	}
 	if (len_hist_far < 1) {
@@ -1393,6 +1445,7 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 		}
 		printf("\n");
 	}
+
 	// sorts the scatters by deposit energy, now only keep the largest LARGEST
 	scatter** scatters_near_short = (scatter**)malloc((LARGEST + SKIP) * sizeof(scatter*));
 	scatter** scatters_far_short = (scatter**)malloc((LARGEST + SKIP) * sizeof(scatter*));
@@ -1420,7 +1473,6 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 	if (len_hist_far > LARGEST + SKIP) {
 		len_hist_far = LARGEST + SKIP;
 	}
-	double best_find = sigma_per_scatter * (len_hist_near - SKIP);
 
 
 
@@ -1479,8 +1531,8 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 
 
 	free(scatters_near);
-	free(scatters_near_short);
 	free(scatters_far);
+	free(scatters_near_short);
 	free(scatters_far_short);
 
 
@@ -1597,12 +1649,12 @@ llist* build_scatters(llist* detector_history, int id) {
 					scatter* add_scatter;
 					if (ele_dir == NULL) {
 						
-						add_scatter = new_scatter(scatter_loc, NULL, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, TIME_UNCERT_CM);
+						add_scatter = new_scatter(scatter_loc, NULL, cur_event->energy, cur_event->tof, sqrt(cur_event->energy / E_per_switch) * E_per_switch, spc_uncert, time_uncert_cm);
 					} else {
 						// normalize the electron direction
 						vec3d* ele_dir_norm = vec_norm(ele_dir);
 						free(ele_dir);
-						add_scatter = new_scatter(scatter_loc, ele_dir_norm, cur_event->energy, cur_event->tof, sqrt(cur_event->energy), SPC_UNCERT, TIME_UNCERT_CM);
+						add_scatter = new_scatter(scatter_loc, ele_dir_norm, cur_event->energy, cur_event->tof, sqrt(cur_event->energy / E_per_switch) * E_per_switch, spc_uncert, time_uncert_cm);
 						path_scatters++;
 					}
 					total_scatters++;
@@ -1621,21 +1673,16 @@ llist* build_scatters(llist* detector_history, int id) {
 						time_var += drand48();
 						eng_var += drand48();
 					}
-					dist_var -= UNCERT_REP / 2;
-					time_var -= UNCERT_REP / 2;
-					eng_var -= UNCERT_REP / 2;
-					dist_var *= SPC_UNCERT;
-					time_var *= TIME_UNCERT_CM / SPD_LGHT;
+					dist_var -= ((float)(UNCERT_REP) * 0.5);
+					time_var -= ((float)(UNCERT_REP) * 0.5);
+					eng_var  -= ((float)(UNCERT_REP) * 0.5);
+					dist_var *= spc_uncert;
+					time_var *= time_uncert_cm / SPD_LGHT;
 					// distance and time now have their variation size
-					double dist_theta = PI * drand48();
+					// double dist_theta = PI * drand48(); // this seems ok but
+					// gives a higher density of results near the poles!
+					double dist_theta = (2 * acos((2.0 * drand48()) - 1.0)) - PI;
 					double dist_phi = 2 * PI * drand48();
-					// if (drand48() > 0.96) {
-					// 	// we failed a roll to get the electron direction right,
-					// 	// so do whatever is the right break to behavior
-					// 	if (ele_dir != NULL) {
-
-					// 	}
-					// }
 					// distance variation direction
 					double dist_x = dist_var * cos(dist_phi) * sin(dist_theta);
 					double dist_y = dist_var * sin(dist_phi) * cos(dist_theta);
@@ -1648,7 +1695,13 @@ llist* build_scatters(llist* detector_history, int id) {
 					// distance variation set
 					add_scatter->time += time_var;
 					// done adding time randomness
-					add_scatter->deposit += (eng_var * add_scatter->eng_uncert);
+					// find the new energy (after blurring)
+					double new_eng = (eng_var * add_scatter->eng_uncert) + add_scatter->deposit;
+					// discretize the energy value to line up with the number of
+					// switched dye molecules
+					int switched_mol = (int)round(new_eng / E_per_switch);
+					add_scatter->eng_uncert = sqrt((double)switched_mol) * E_per_switch;
+					add_scatter->deposit = ((double)switched_mol) * E_per_switch;
 					// done adding energy randomness
 					// done adding random variation
 					if (add_scatter->deposit <= MIN_SCAT_ENG) {
@@ -2225,23 +2278,31 @@ lor* create_lor(scatter* a, scatter* b) {
 	vec3d* center_half = vec_scaler(center_subtraction, 0.5);
 	vec3d* geometric_center = vec_add(b->loc, center_half);
 	vec3d* ba_unit = vec_norm(center_half);
-	double time_delta = 0.5 * (b->time - a->time);
-	vec3d* displacement = vec_scaler(ba_unit, SPD_LGHT * time_delta);
+	double time_delta = b->time - a->time;
+	vec3d* displacement = vec_scaler(ba_unit, SPD_LGHT * time_delta * 0.5);
 	lor* new = (lor*)malloc(sizeof(lor));
 	new->center = vec_add(geometric_center, displacement);
 	new->dir = ba_unit;
 	double a_space = a->space_uncert;
 	double b_space = b->space_uncert;
+	double a_time  = a->time_uncert;
+	double b_time  = b->time_uncert;
 	if (a_space < 0) {
 		a_space = .1;
 	}
 	if (b_space < 0) {
 		b_space = 0.1;
 	}
+	if (a_time < 0) {
+		a_time = 5.;
+	}
+	if (b_time < 0) {
+		b_time = 5.;
+	}
 
 	new->transverse_uncert = sqrt(a_space * a_space + b_space * b_space);
 	new->long_uncert = sqrt(a_space * a_space + b_space * b_space + 
-							a->time_uncert * a->time_uncert + b->time_uncert * b->time_uncert);
+							a_time * a_time + b_time * b_time);
 	free(center_subtraction);
 	free(center_half);
 	free(geometric_center);
@@ -2263,14 +2324,56 @@ int main(int argc, char **argv) {
 	// we are looking for an input histories file, an output file name,
 	// and an inner radius of the detector this may later be changed to
 	// input histories, input data file, output file name
-	if (argc != 7) {
-		printf("Unable to run. Expected 6 arguments got %i.\n", argc - 1);
+	if (argc < 7) {
+		printf("Unable to run. Expected at least 6 arguments got %i.\n", argc - 1);
 		printf("Expects an input full history file, input detector volume ");
 		printf("history file, output file name, detector");
-		printf(" inner radius, detector half height and energy cutoff percent.\nDetector sizes");
-		printf(" are in the same units as the input history file's distances.\n");
+		printf(" inner radius, detector half height and FOM cutoff.\nDetector sizes");
+		printf(" are in the same units as the input history file's distances. ");
+		printf("Use a -h to get additional help information\n");
 		return 1;
 	}
+	int binary = 0;
+	if (argc > 7) {
+		// go check all of the following flags!
+		for (int i = 1; i < argc; i++) {
+			if (!strcasecmp(argv[i], "-b")) {
+				// binary flag
+				binary = 1;
+			}
+			if (!strcasecmp(argv[i], "-E")) {
+				// change energy per scatter
+				if (argc > (i + 1)) {
+					E_per_switch = strtod(argv[i+1], NULL);
+					printf("Energy per switch set to %lf keV/switch\n", E_per_switch);
+				} else {
+					fprintf(stderr, "-E flag not followed by float!\n");
+					return 1;
+				}
+			}
+			if (!strcasecmp(argv[i], "-s")) {
+				// change spatial resolution
+				if (argc > (i + 1)) {
+					spc_uncert = strtod(argv[i+1], NULL);
+					printf("Spatial resolution set to %lf cm\n", spc_uncert);
+				} else {
+					fprintf(stderr, "-s flag not followed by float!\n");
+					return 1;
+				}
+			}
+			if (!strcasecmp(argv[i], "-t")) {
+				// change energy per scatter
+				if (argc > (i + 1)) {
+					time_uncert_cm = strtod(argv[i+1], NULL);
+					printf("Time resolution set to %lf cm\n", time_uncert_cm);
+				} else {
+					fprintf(stderr, "-t flag not followed by float!\n");
+					return 1;
+				}
+			}
+		}
+	}
+
 	FILE* in_histories = fopen(argv[1], "r");
 	if (in_histories == NULL) {
 		printf("Unable to open history file\n");
@@ -2281,8 +2384,8 @@ int main(int argc, char **argv) {
 		printf("Unable to open detector history file\n");
 		return 1;
 	}
-	char* debug_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
 	char* lor_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
+	char* debug_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
 	char* eng_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
 	char* gold_file;
 	char* silver_file;
@@ -2357,9 +2460,15 @@ int main(int argc, char **argv) {
 	fprintf(out_in_patient, "alpha 1, beta 1, gamma 1, delta 1, epsilon 1, ");
 	fprintf(out_in_patient, "alpha 2, beta 2, gamma 2, delta 2, epsilon 2, 0\n");
 
-	// current loop version, just for testing
-	llist *history = load_history(in_histories, read_line);
-	llist *in_det_hist = load_historyb(in_det_histories, read_line);
+	llist *in_det_hist = NULL;
+	llist *history = NULL;
+	if (binary) {
+		history = load_history(in_histories, read_line_binary);
+		in_det_hist = load_historyb(in_det_histories, read_line_binary);
+	} else {
+		history = load_history(in_histories, read_line);
+		in_det_hist = load_historyb(in_det_histories, read_line);
+	}
 	// some extra vars for calculating percentage of in paitent scatters
 	uint table[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
 	uint table_total = 0;
@@ -2551,13 +2660,21 @@ int main(int argc, char **argv) {
 
 		fmap(history, delete_event);
 		delete_list(history);
-		history = load_history(in_histories, read_line);
+		if (binary) {
+			history = load_history(in_histories, read_line_binary);
+		} else {
+			history = load_history(in_histories, read_line);
+		}
 		hist_num++;
 		if (history != NULL) {		
 			if (((event*)history->data)->number > ((event*)in_det_hist->data)->number) {
 				fmap(in_det_hist, delete_event);
 				delete_list(in_det_hist);
-				in_det_hist = load_historyb(in_det_histories, read_line);
+				if (binary) {
+					in_det_hist = load_historyb(in_det_histories, read_line_binary);
+				} else {
+					in_det_hist = load_historyb(in_det_histories, read_line);
+				}
 			}
 		}
 
