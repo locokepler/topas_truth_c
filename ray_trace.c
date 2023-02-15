@@ -488,6 +488,9 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
     } else if ((exit2 != NULL) && (exit2->t > 0)) {
         plane_intersect = exit2;
         traversal_free(exit1);
+    } else {
+        traversal_free(exit1);
+        traversal_free(exit2);
     }
     // now for projected cylinder/sphere work. First rotate everything so that
     // the cylinder points in the z axis
