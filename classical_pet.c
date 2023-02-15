@@ -19,7 +19,7 @@
 #define SPC_UNCERT_PLANE 0.3 // uncertainty in the plane of the bore
 #define SPC_UNCERT_RAD 1.0  // uncertainty radial to the bore
 #define UNCERT_REP 12 // repetitions of addition to create random values
-#define P_PER_KEV 10
+#define P_PER_KEV 50 // photons per keV. Efficiencys have already been applied
 
 #define READ_DEBUG 0
 #define GENERAL_DEBUG 0
@@ -32,8 +32,8 @@ uint graph_id;
 
 
 uint hist_num;
-uint total_scatters = 0;
-uint path_scatters = 0;
+uint true_counts = 0;
+uint scatter_counts = 0;
 
   
 // reads a line from the source file as an event
@@ -505,43 +505,33 @@ uint inside_radius(double distance, double height, event* event) {
 	return 0;
 }
 
-int rec_in_paitent(llist* list, double radius, double height, int id) {
+int rec_in_paitent(llist* list, int reject_id) {
 	if (list == NULL) {
 		return 0;
 	}
-	if (((event*)list->data)->id != id) {
-		return rec_in_paitent(list->down, radius, height, id);
-		// not our particle
-	}
-	if (!inside_radius(radius, height, (event*)(list->data))) {
-		// not inside in paitent radius, can't be in paitent scatter
-		// printf("rec_in_paitent: not inside\n");
-		return rec_in_paitent(list->down, radius, height, id);
-	}
-	// we now have a mention of the gamma inside the in paitent
-	// radius, now to check if it lost energy from it's previous
-	// mention
-	if ((list->up != NULL) && (((event*)(list->data))->id == ((event*)(list->up->data))->id)) {
-		// there is a previous mention of the same particle
-		// printf("Particle in loc w/ predicessor\n");
-		if (((event*)(list->data))->energy < ((event*)(list->up->data))->energy) {
-			// ok now the previous interaction of the same particle had a larger
-			// energy by more than the chosen energy range. We have an in paitent scatter!
-			// we can stop looking now.
-			event* ev = (event*)list->data;
-			// even though we have an in patient scatter we want to check we don't
-			// have a second one or more from this gamma
-			if (ev->energy < energy_cutoff)
-				return 100; 
-				// returns a large number of scatters so that the value
-				// can be spotted and rejected later in the code.
-			return 1 + rec_in_paitent(list->down, radius, height, id);
-			// will return >1 if an additional in patient scatter occcurs
+	// finds the first two gammas of the given history and looks to see if they
+	// are just about 511 keV
+	event* current = (event*)list->data;
+	if ((current->particle == 22) && (reject_id == -1)) {
+		// we have our first gamma
+		if (fabs(current->energy - ELECTRON_MASS) > 0.1) {
+			// we had an IPS, so lets say so
+			return 1;
+		} else {
+			reject_id = current->id;
+			return rec_in_paitent(list->down, reject_id);
 		}
 	}
-	// well better luck next time
-	// printf("rec_in_paitent: other problem\n");
-	return rec_in_paitent(list->down, radius, height, id);
+	if ((current->particle == 22) && (current->id != reject_id)) {
+		// different gamma!
+		if (fabs(current->energy - ELECTRON_MASS) > 0.1) {
+			// we had an IPS, so lets say so
+			return 1;
+		} else {
+			return 0;
+		}
+	}
+	return rec_in_paitent(list->down, reject_id);
 }
 
 /* 
@@ -552,11 +542,11 @@ int rec_in_paitent(llist* list, double radius, double height, int id) {
  * this information by calling rec_in_paitent, which checks over the
  * list for a gamma that fits the above conditions
  */
-int in_patient(llist* list, double radius, double height, int id) {
+int in_patient(llist* list) {
 	if (list == NULL)
 		fprintf(stderr, "in_patient passed NULL pointer\n");
 	list = list_head(list);
-	return rec_in_paitent(list, radius, height, id);
+	return rec_in_paitent(list, -1);
 }
 
 /*
@@ -1296,8 +1286,8 @@ scatter** find_endpoints(llist* detector_history, double energy_percent) {
 
                 // add time randomness
                 time_rand *= TIME_UNCERT_CM / SPD_LGHT;
-                double photons = cur_event->energy / ((double)P_PER_KEV);
-                double eng_uncert = sqrt(photons);
+                double photons = cur_event->energy * (double)P_PER_KEV;
+                double eng_uncert = sqrt(photons) / ((double)P_PER_KEV);
                 eng_rand *= eng_uncert;
 
 
@@ -1577,6 +1567,11 @@ int main(int argc, char **argv) {
 		if (endpoints == NULL) {
 
 		} else {
+			if (in_patient(in_det_hist)) {
+				scatter_counts++;
+			} else {
+				true_counts++;
+			}
 			// create the LOR
 			lor* result = create_lor(endpoints[0], endpoints[1]);
 			fprintf(lor_output, "%i, ", ((event*)(in_det_hist->data))->number);
@@ -1625,6 +1620,8 @@ int main(int argc, char **argv) {
 
 	}
 
+	printf("Scattered: %u\n", scatter_counts);
+	printf("True: %u\n", true_counts);
 
 	fclose(in_det_histories);
 	fclose(lor_output);
