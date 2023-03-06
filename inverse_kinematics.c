@@ -34,7 +34,7 @@ double E_per_switch = 1.0; // keV/switch
 #define GRAPHVIZ_DEBUG 0
 FILE* debug_graphs = NULL;
 uint graph_id;
-#define LOR_GROUP 1 // iff 1 outputs gold, silver, and lead files
+#define LOR_GROUP 1 // iff 1 outputs true and misID
 #define CUT_IPS 1 // do not output to Au/Ag/Pb files if an IPS happened
 
 //OUTDATED if 0 output all found lors, 1 only with both T=R=1, 2 
@@ -298,7 +298,8 @@ llist* load_history(FILE* source, event* (*f)(FILE*)) {
 	// make a new copy of the event in previous event for storing
 	// means it will continue pointing right as otherwise it can
 	// point to the history that got freed
-	previous_event = duplicate_event(previous_event);
+	// previous_event = duplicate_event(previous_event);
+	// WHOOPS THAT WAS A MEMORY LEAK!
 	if (GENERAL_DEBUG) {
 		printf("History number %i\n", history_num);
 	}
@@ -520,43 +521,76 @@ uint inside_radius(double distance, double height, event* event) {
 	return 0;
 }
 
-int rec_in_paitent(llist* list, double radius, double height, int id) {
+// int rec_in_paitent(llist* list, double radius, double height, int id) {
+// 	if (list == NULL) {
+// 		return 0;
+// 	}
+// 	if (((event*)list->data)->id != id) {
+// 		return rec_in_paitent(list->down, radius, height, id);
+// 		// not our particle
+// 	}
+// 	if (!inside_radius(radius, height, (event*)(list->data))) {
+// 		// not inside in paitent radius, can't be in paitent scatter
+// 		// printf("rec_in_paitent: not inside\n");
+// 		return rec_in_paitent(list->down, radius, height, id);
+// 	}
+// 	// we now have a mention of the gamma inside the in paitent
+// 	// radius, now to check if it lost energy from it's previous
+// 	// mention
+// 	if ((list->up != NULL) && (((event*)(list->data))->id == ((event*)(list->up->data))->id)) {
+// 		// there is a previous mention of the same particle
+// 		// printf("Particle in loc w/ predicessor\n");
+// 		if (((event*)(list->data))->energy < ((event*)(list->up->data))->energy) {
+// 			// ok now the previous interaction of the same particle had a larger
+// 			// energy by more than the chosen energy range. We have an in paitent scatter!
+// 			// we can stop looking now.
+// 			event* ev = (event*)list->data;
+// 			// even though we have an in patient scatter we want to check we don't
+// 			// have a second one or more from this gamma
+// 			if (ev->energy < energy_cutoff)
+// 				return 100; 
+// 				// returns a large number of scatters so that the value
+// 				// can be spotted and rejected later in the code.
+// 			return 1 + rec_in_paitent(list->down, radius, height, id);
+// 			// will return >1 if an additional in patient scatter occcurs
+// 		}
+// 	}
+// 	// well better luck next time
+// 	// printf("rec_in_paitent: other problem\n");
+// 	return rec_in_paitent(list->down, radius, height, id);
+// }
+
+// returns 1 for finding the first gamma it runs across has an IPS. Returns a 
+// 2 for findign the second gamma it runs across has an IPS. These are then added
+// to give 0,1,2,3 for the four possible cases: 0: no IPS, 1: only the first gamma,
+// 2: only the second gamma, and 3: both gammas
+int rec_in_paitent(llist* list, int reject_id) {
 	if (list == NULL) {
 		return 0;
 	}
-	if (((event*)list->data)->id != id) {
-		return rec_in_paitent(list->down, radius, height, id);
-		// not our particle
-	}
-	if (!inside_radius(radius, height, (event*)(list->data))) {
-		// not inside in paitent radius, can't be in paitent scatter
-		// printf("rec_in_paitent: not inside\n");
-		return rec_in_paitent(list->down, radius, height, id);
-	}
-	// we now have a mention of the gamma inside the in paitent
-	// radius, now to check if it lost energy from it's previous
-	// mention
-	if ((list->up != NULL) && (((event*)(list->data))->id == ((event*)(list->up->data))->id)) {
-		// there is a previous mention of the same particle
-		// printf("Particle in loc w/ predicessor\n");
-		if (((event*)(list->data))->energy < ((event*)(list->up->data))->energy) {
-			// ok now the previous interaction of the same particle had a larger
-			// energy by more than the chosen energy range. We have an in paitent scatter!
-			// we can stop looking now.
-			event* ev = (event*)list->data;
-			// even though we have an in patient scatter we want to check we don't
-			// have a second one or more from this gamma
-			if (ev->energy < energy_cutoff)
-				return 100; 
-				// returns a large number of scatters so that the value
-				// can be spotted and rejected later in the code.
-			return 1 + rec_in_paitent(list->down, radius, height, id);
-			// will return >1 if an additional in patient scatter occcurs
+	// finds the first two gammas of the given history and looks to see if they
+	// are just about 511 keV
+	event* current = (event*)list->data;
+	if ((current->particle == 22) && (reject_id == -1)) {
+		// we have our first gamma
+		if (fabs(current->energy - ELECTRON_MASS) > 0.1) {
+			// we had an IPS, so lets say so
+			return 1 + rec_in_paitent(list->down, current->id);
+		} else {
+			reject_id = current->id;
+			return rec_in_paitent(list->down, reject_id);
 		}
 	}
-	// well better luck next time
-	// printf("rec_in_paitent: other problem\n");
-	return rec_in_paitent(list->down, radius, height, id);
+	if ((current->particle == 22) && (current->id != reject_id)) {
+		// different gamma!
+		if (fabs(current->energy - ELECTRON_MASS) > 0.1) {
+			// we had an IPS, so lets say so
+			return 2;
+		} else {
+			return 0;
+		}
+	}
+	return rec_in_paitent(list->down, reject_id);
 }
 
 /* 
@@ -567,12 +601,27 @@ int rec_in_paitent(llist* list, double radius, double height, int id) {
  * this information by calling rec_in_paitent, which checks over the
  * list for a gamma that fits the above conditions
  */
-int in_patient(llist* list, double radius, double height, int id) {
+int in_patient(llist* list) {
 	if (list == NULL)
 		fprintf(stderr, "in_patient passed NULL pointer\n");
 	list = list_head(list);
-	return rec_in_paitent(list, radius, height, id);
+	return rec_in_paitent(list, -1);
 }
+
+// /* 
+//  * Checks to see if there has been an in paitent scattering event in
+//  * the given history. An event is defined as a gamma showing up in the
+//  * list within the given radius of the z axis, with the previous instance
+//  * of the gamma having an energy greater by at least ENG_RNG. It finds
+//  * this information by calling rec_in_paitent, which checks over the
+//  * list for a gamma that fits the above conditions
+//  */
+// int in_patient(llist* list, double radius, double height, int id) {
+// 	if (list == NULL)
+// 		fprintf(stderr, "in_patient passed NULL pointer\n");
+// 	list = list_head(list);
+// 	return rec_in_paitent(list, radius, height, id);
+// }
 
 /*
  * find_annihilation_point
@@ -1495,7 +1544,7 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 				fprintf(debug_graphs, "}\n");
 			}
 			if (try < best_find) {
-				best_scatter = scatters_near[j];
+				best_scatter = scatters_near_short[j];
 				best_find = try;
 				if (best_found_path != NULL) {
 					fmap(best_found_path, free_null);
@@ -1538,6 +1587,262 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 
 	return best_scatter;
 
+}
+
+/* double_tree_stat_iteration
+ * Takes a pair of histories and sigma per scatter and finds the best solution
+ * using both trees. For each i,j, the two arrays of scatters are iterated over.
+ * Starting with path j->i with i as the first scatter location a FOM is calculated
+ * by recursive_search. If this FOM passes the test then the second tree is searched.
+ * If that FOM also passes the test then the two FOMs are combined. This combination
+ * is then minimized
+ */
+scatter** double_tree_stat_iteration(llist* history_1, llist* history_2, double sigma_per_scatter) {
+	if ((history_1 == NULL) || (history_2 == NULL)) {
+		return NULL;
+	}
+	// for each in history near, choose a history far and run the recursive search.
+	// hang onto the best result after each point
+
+
+	scatter* best_scatter_1 = NULL;
+	scatter* best_scatter_2 = NULL;
+
+	int len_hist_1 = list_length(history_1);
+	int len_hist_2 = list_length(history_2);
+
+	if ((len_hist_1 < 2) || (len_hist_2 < 2)) {
+		// behavior for keeping singles goes here. If we are to keep singles
+		// we should return the single from any of these that have a single
+		// scatter, and run the tree search on any others
+		if (KEEP_SINGLES) {
+			scatter** endpoints = (scatter**)calloc(2, sizeof(scatter*));
+			if (len_hist_1 == 1) {
+				// hist 1 has a single scatter
+				endpoints[0] = history_1->data;
+			}
+			if (len_hist_2 == 1) {
+				endpoints[1] = history_2->data;
+			}
+			if (endpoints[0] == NULL) {
+				endpoints[0] = multi_gamma_stat_iteration(history_1, history_2, sigma_per_scatter, alpha_n_1, alpha_eng_distro_n_1);
+			}
+			if (endpoints[1] == NULL) {
+				endpoints[1] = multi_gamma_stat_iteration(history_2, history_1, sigma_per_scatter, alpha_n_2, alpha_eng_distro_n_2);
+			}
+			return endpoints;
+		}
+		return NULL;
+	}
+
+	double best_find_1 = sigma_per_scatter * (len_hist_1 - SKIP);
+	double best_find_2 = sigma_per_scatter * (len_hist_2 - SKIP);
+
+	// lets check the trigger: The two scatter lists must trigger at least two
+	// different modules in phi
+	int near_module = 0;
+	llist* location = list_tail(history_1);
+	while ((near_module == 0) && (location != NULL) && (location->data != NULL)) {
+		near_module = phi_trigger((scatter*)(location->data), PHI_MODULES);
+		location = location->up;
+	}
+	location = history_2;
+	int far_module = 0;
+	while ((far_module == 0) && (location != NULL) && (location->data != NULL)) {
+		int temp = phi_trigger((scatter*)(location->data), PHI_MODULES);
+		if ((abs(temp - near_module) > MODULE_SEPERATION) && (abs(temp - near_module) < (PHI_MODULES - MODULE_SEPERATION))) {
+			far_module = temp;
+		}
+		location = location->down;
+	}
+	if (far_module == 0) {
+		return NULL;
+	}
+
+	possible_branches += len_hist_2 * factorial(len_hist_1);
+	possible_branches += len_hist_1 * factorial(len_hist_2);
+
+	llist* hist_1_bottom = list_tail(history_1);
+	// time to turn the scattering list into an array for fast access
+	scatter** scatters_1 = (scatter**)malloc(len_hist_1 * sizeof(scatter*));
+	for (int i = 0; i < len_hist_1; i++)	{
+		scatters_1[i] = (scatter*)hist_1_bottom->data;
+		if (TREE_DEBUG) {
+			printf("dtsi: near scatter %i, N = ", i);
+			if (scatters_1[i]->truth != NULL) {
+				printf("%i, ", scatters_1[i]->truth->true_n);
+				printf("deposit = %lf keV\n", scatters_1[i]->deposit);
+			}
+			}
+		hist_1_bottom = hist_1_bottom->up;
+	}
+
+	llist* hist_2_bottom = list_tail(history_2);
+	scatter** scatters_2 = (scatter**)malloc(len_hist_2 * sizeof(scatter*));
+	for (int i = 0; i < len_hist_2; i++)	{
+		scatters_2[i] = (scatter*)hist_2_bottom->data;
+		hist_2_bottom = hist_2_bottom->up;
+	}
+
+	scatter_quicksort(scatters_1, 0, len_hist_1 - 1);
+	scatter_quicksort(scatters_2, 0, len_hist_2 - 1);
+	if (GENERAL_DEBUG) {
+		printf("double_tree_stat_iteration: scatters sorted:\n");
+		for (int i = 0; i < len_hist_1; i++) {
+			printf("\t%lf\n", scatters_1[i]->deposit);
+		}
+		printf("\n");
+	}
+
+	// sorts the scatters by deposit energy, now only keep the largest LARGEST
+	scatter** scatters_1_short = (scatter**)malloc((LARGEST + SKIP) * sizeof(scatter*));
+	scatter** scatters_2_short = (scatter**)malloc((LARGEST + SKIP) * sizeof(scatter*));
+	for (int i = 0; i < LARGEST + SKIP; i++) {
+		if (i >= len_hist_1) {
+			scatters_1_short[i] = NULL;
+		} else {
+			scatters_1_short[i] = scatters_1[i];
+			if (TREE_DEBUG) {
+				printf("dtsi: near scatter short %i, N = ", i);
+				if (scatters_1[i]->truth != NULL) {
+					printf("%i\n", scatters_1[i]->truth->true_n);
+				}
+			}
+		}
+		if (i >= len_hist_2) {
+			scatters_2_short[i] = NULL;
+		} else {
+			scatters_2_short[i] = scatters_2[i];
+		}
+	}
+	if (len_hist_1 > LARGEST + SKIP) {
+		len_hist_1 = LARGEST + SKIP;
+	}
+	if (len_hist_2 > LARGEST + SKIP) {
+		len_hist_2 = LARGEST + SKIP;
+	}
+
+
+
+	llist* best_found_path_1 = NULL;
+	llist* best_found_path_2 = NULL;
+	double best_combination = best_find_1 * best_find_1 + best_find_2 + best_find_2;
+
+	for (int j = 0; j < len_hist_1; j++) {
+
+		scatter** new_array_1 = build_array_no_i(scatters_1_short, len_hist_1, j);
+
+		double reduced_second_FOM = best_find_2;
+
+		for (int i = 0; i < len_hist_2; i++) {
+			llist* path_1 = NULL;
+
+			if (GRAPHVIZ_DEBUG) {
+				fprintf(debug_graphs, "\n\ndigraph %u%i%i {\n", hist_num, i, j);
+				graph_id = 0;
+			}
+
+			double try_1 = recursive_search(best_find_1, 0., 511., 0., scatters_2_short[i], scatters_1_short[j], new_array_1, len_hist_1 - 1, &path_1);
+			if (GRAPHVIZ_DEBUG) {
+				fprintf(debug_graphs, "}\n");
+			}
+
+			double try_2 = INFINITY;
+			llist* path_2 = NULL;
+			if (try_1 < best_combination) {
+
+				if (GRAPHVIZ_DEBUG) {
+					fprintf(debug_graphs, "\n\ndigraph %u%i%i {\n", hist_num, j, i);
+					graph_id = 0;
+				}
+
+				reduced_second_FOM = best_combination - try_1;
+				if (reduced_second_FOM > best_find_2) {
+					reduced_second_FOM = best_find_2;
+				}
+
+				scatter** new_array_2 = build_array_no_i(scatters_2_short, len_hist_2, i);
+				try_2 = recursive_search(reduced_second_FOM, 0., 511., 0., scatters_1_short[j], scatters_2_short[i], new_array_2, len_hist_2 - 1, &path_2);
+				if (GRAPHVIZ_DEBUG) {
+					fprintf(debug_graphs, "}\n");
+				}
+
+				free(new_array_2);
+			}
+
+
+			double combination = try_1 + try_2;//(try_1 * try_1) + (try_2 * try_2);
+			if ((try_1 < best_find_1) && (try_2 < reduced_second_FOM) && (combination < best_combination)) {
+				best_combination = combination;
+				best_scatter_1 = scatters_1_short[j];
+				if (best_found_path_1 != NULL) {
+					fmap(best_found_path_1, free_null);
+					delete_list(best_found_path_1);
+				}
+				best_found_path_1 = path_1;
+
+				best_scatter_2 = scatters_2_short[i];
+				if (best_found_path_2 != NULL) {
+					fmap(best_found_path_2, free_null);
+					delete_list(best_found_path_2);
+				}
+				best_found_path_2 = path_2;
+			} else {
+				fmap(path_1, free_null);
+				delete_list(path_1);
+				fmap(path_2, free_null);
+				delete_list(path_2);
+			}
+		}
+		free(new_array_1);
+	}
+
+	// move the path into the array of N vs alpha, beta, etc.
+	for (int i = 0; i < 2; i++) {
+		llist* current_location = NULL;
+		scatter* search_scatter = NULL;
+		int *t_vs_r;
+		float* E_t_vs_r;
+		if (i == 0) {
+			current_location = best_found_path_1;
+			search_scatter = best_scatter_1;
+			t_vs_r = alpha_n_1;
+			E_t_vs_r = alpha_eng_distro_n_1;
+		} else {
+			current_location = best_found_path_2;
+			search_scatter = best_scatter_2;
+			t_vs_r = alpha_n_2;
+			E_t_vs_r = alpha_eng_distro_n_2;
+		}
+		if (search_scatter != NULL) {
+			for (int i = 0; i < FIRST_N; i++) {
+				if (current_location != NULL) {
+					t_vs_r[i] = (int)(((float*)(current_location->data))[0]);
+					E_t_vs_r[i] = ((float*)current_location->data)[1];
+					current_location = current_location->down;
+				} else {
+					t_vs_r[i] = -1;
+					E_t_vs_r[i] = -1;
+				}
+			}
+		}
+	}
+	fmap(best_found_path_1, free_null);
+	delete_list(best_found_path_1);
+	fmap(best_found_path_2, free_null);
+	delete_list(best_found_path_2);
+
+
+	free(scatters_1);
+	free(scatters_2);
+	free(scatters_1_short);
+	free(scatters_2_short);
+
+	scatter** both = (scatter**)malloc(sizeof(scatter*) * 2);
+	both[0] = best_scatter_1;
+	both[1] = best_scatter_2;
+
+	return both;
 }
 
 /*
@@ -2170,6 +2475,155 @@ scatter** find_endpoints_stat(llist* detector_history, double sigma_per_scatter)
 	}
 	return return_vals;
 }
+/* 
+ * find_double_endpoints_stat
+ * finds the predicted endpoints of the first two gammas in the detector history
+ * using a statistical determination method. For the first step a scatter is
+ * chosen from each gamma. Then recursivly a single scatter is chosen from the
+ * list of remaining scatters being seached, and the probability of the deviation
+ * from physical that is found is determined. If this does not exceed the current
+ * best find the process repeats until the list is empty. The recursive portion
+ * is completed using the recursive_search function. The energy_percent value
+ * provides a minimum probability that must be cleared for the result to be
+ * passed out.
+ * 
+ * Now uses the double_tree_stat_iteration method, moving some of the behavior 
+ * done by find_endpoints_stat into double_tree_stat_iteration instead.
+ */
+scatter** find_double_endpoints_stat(llist* detector_history, double sigma_per_scatter) {
+	if (detector_history == NULL) {
+		return NULL;
+	}
+	// find the id of the first gamma
+
+	// first make sure we are at the top of the detector list
+	detector_history = list_head(detector_history);
+	llist* search_history = detector_history;
+	int first_id = 0;
+	int second_id = 0;
+
+	while (search_history != NULL) {
+		event* current_event = (event*)search_history->data;
+		if ((current_event->particle == 22) && (current_event->id != first_id)) {
+			// we have a gamma, and it isn't the same as the (possibly alreadly found)
+			// first gamma
+			if (!first_id) {
+				first_id = current_event->id;
+			} else {
+				second_id = current_event->id;
+				break;
+			}
+		}
+		search_history = search_history->down;
+	}
+	if (second_id == 0) {
+		// no second gamma was found, so no line of responce can be made.
+		return NULL;
+	}
+
+	llist* scat_list1 = build_scatters(detector_history, first_id);
+	llist* scat_list2 = build_scatters(detector_history, second_id);
+	if ((scat_list1 == NULL) || (scat_list2 == NULL)) {
+		if (scat_list1 == NULL) {
+			fmap(scat_list2, delete_scatter);
+			delete_list(scat_list2);
+		} else {
+			fmap(scat_list1, delete_scatter);
+			delete_list(scat_list1);
+		}
+		return NULL;
+	}
+	// clear the alpha_n arrays
+	for (int i = 0; i < FIRST_N; i++) {
+		alpha_n_1[i] = -1;
+		alpha_n_2[i] = -1;
+	}
+	llist* current_loc1 = list_tail(scat_list1);
+	llist* current_loc2 = list_tail(scat_list2);
+	for (int i = 0; i < FIRST_N; i++) {
+		if ((current_loc1 != NULL) && (current_loc1->data != NULL)) {
+			n_eng_distro_n_1[i] = ((scatter*)(current_loc1->data))->deposit;
+			current_loc1 = current_loc1->up;
+		} else {
+			n_eng_distro_n_1[i] = -1;
+		}
+		if ((current_loc2 != NULL) && (current_loc2->data != NULL)) {
+			n_eng_distro_n_2[i] = ((scatter*)(current_loc2->data))->deposit;
+			current_loc2 = current_loc2->up;
+		} else {
+			n_eng_distro_n_2[i] = -1;
+		}
+	}
+
+	// run the actual finding of endpoint 1
+	scatter** endpoints = double_tree_stat_iteration(scat_list1, scat_list2, sigma_per_scatter);
+
+	scatter* endpoint1 = NULL;
+	scatter* endpoint2 = NULL;
+	if (endpoints != NULL) {
+		endpoint1 = endpoints[0];
+		endpoint2 = endpoints[1];
+		free(endpoints);
+	}
+	// if we failed just give the highest energy scatter. Leads to far more bad
+	// solutions but also doesn't leave anything on the table.
+	if (NEVER_CUT) {
+		if ((endpoint1 == NULL) && (scat_list1->data != NULL)) {
+			endpoint1 = scat_list1->data;
+		}
+		if ((endpoint2 == NULL) && (scat_list2->data != NULL)) {
+			endpoint2 = scat_list2->data;
+		}
+	}
+
+
+	if ((endpoint1 == NULL) || (endpoint2 == NULL)) {
+		fmap(scat_list1, delete_scatter);
+		fmap(scat_list2, delete_scatter);
+		delete_list(scat_list1);
+		delete_list(scat_list2);
+		missed_reconstructions += missed_reconstruction_IPS_mask;
+		return NULL;
+	}
+
+	if (GENERAL_DEBUG) {
+		printf("find_endpoints_ele_dir: scatters found at:\n");
+		vec_print(endpoint1->loc, stdout);
+		printf("\n");
+		vec_print(endpoint2->loc, stdout);
+		printf("\n");
+	}
+
+	// copy the two endpoints to new scatter structures (allows freeing of
+	// scatter lists)
+
+	scatter *first_endpoint = copy_scatter(endpoint1);
+	scatter *second_endpoint = copy_scatter(endpoint2);
+
+	// free the old list of scatters:
+	fmap(scat_list1, delete_scatter);
+	fmap(scat_list2, delete_scatter);
+	delete_list(scat_list1);
+	delete_list(scat_list2);
+	
+
+	// make an array of the two new scatters to be sent out of the function
+	scatter** return_vals = (scatter**)malloc(2 * sizeof(scatter*));
+	return_vals[0] = first_endpoint;
+	return_vals[1] = second_endpoint;
+	if (GENERAL_DEBUG) {
+		printf("find_endpoints_ele_dir: returning scatters found at:\n");
+		vec_print(return_vals[0]->loc, stdout);
+		printf("\n");
+		vec_print(return_vals[1]->loc, stdout);
+		// vec_print(first_endpoint->loc, stdout);
+		// printf("\n");
+		// vec_print(second_endpoint->loc, stdout);
+		
+		printf("\n");
+	}
+	return return_vals;
+}
 
 
 
@@ -2324,17 +2778,17 @@ int main(int argc, char **argv) {
 	// we are looking for an input histories file, an output file name,
 	// and an inner radius of the detector this may later be changed to
 	// input histories, input data file, output file name
-	if (argc < 7) {
-		printf("Unable to run. Expected at least 6 arguments got %i.\n", argc - 1);
-		printf("Expects an input full history file, input detector volume ");
-		printf("history file, output file name, detector");
-		printf(" inner radius, detector half height and FOM cutoff.\nDetector sizes");
-		printf(" are in the same units as the input history file's distances. ");
+	if (argc < 4) {
+		printf("Unable to run. Expected at least 3 arguments got %i.\n", argc - 1);
+		printf("Expects an input detector volume ");
+		printf("history file, output file name,");
+		printf(" and FOM cutoff.\n");
+		// printf("");
 		printf("Use a -h to get additional help information\n");
 		return 1;
 	}
 	int binary = 0;
-	if (argc > 7) {
+	if (argc > 4) {
 		// go check all of the following flags!
 		for (int i = 1; i < argc; i++) {
 			if (!strcasecmp(argv[i], "-b")) {
@@ -2371,60 +2825,60 @@ int main(int argc, char **argv) {
 					return 1;
 				}
 			}
+			if (!strcasecmp(argv[i], "-h")) {
+				printf("Help information goes here, you the user are out of luck!\n");
+			}
 		}
 	}
 
-	FILE* in_histories = fopen(argv[1], "r");
-	if (in_histories == NULL) {
-		printf("Unable to open history file\n");
-		return 1;
-	}
-	FILE* in_det_histories = fopen(argv[2], "r");
+	// FILE* in_histories = fopen(argv[1], "r");
+	// if (in_histories == NULL) {
+	// 	printf("Unable to open history file\n");
+	// 	return 1;
+	// }
+	FILE* in_det_histories = fopen(argv[1], "r");
 	if (in_det_histories == NULL) {
 		printf("Unable to open detector history file\n");
 		return 1;
 	}
-	char* lor_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
-	char* debug_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
-	char* eng_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
-	char* gold_file;
-	char* silver_file;
+	char* lor_file = (char*)malloc(sizeof(char) * (strlen(argv[2]) + 10));
+	char* debug_file = (char*)malloc(sizeof(char) * (strlen(argv[2]) + 10));
+	char* eng_file = (char*)malloc(sizeof(char) * (strlen(argv[2]) + 10));
+	char* true_file;
+	char* misID_file;
 	char* lead_file;
 	if (LOR_GROUP) {
-		gold_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
-		silver_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
-		lead_file = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
+		true_file = (char*)malloc(sizeof(char) * (strlen(argv[2]) + 10));
+		misID_file = (char*)malloc(sizeof(char) * (strlen(argv[2]) + 10));
+		lead_file = (char*)malloc(sizeof(char) * (strlen(argv[2]) + 10));
 	}
 
-	strcpy(debug_file, argv[3]);
-	strcpy(lor_file, argv[3]);
-	strcpy(eng_file, argv[3]);
+	strcpy(debug_file, argv[2]);
+	strcpy(lor_file, argv[2]);
+	strcpy(eng_file, argv[2]);
 	if (LOR_GROUP) {
-		strcpy(gold_file, argv[3]);
-		strcpy(silver_file, argv[3]);
-		strcpy(lead_file, argv[3]);
+		strcpy(true_file, argv[2]);
+		strcpy(misID_file, argv[2]);
+		strcpy(lead_file, argv[2]);
 	}
 
 	debug_file = strcat(debug_file, ".debug");
 	lor_file = strcat(lor_file, ".lor");
 	eng_file = strcat(eng_file, ".eng");
 	if (LOR_GROUP) {
-		gold_file = strcat(gold_file, ".gold");
-		silver_file = strcat(silver_file, ".silver");
-		lead_file = strcat(lead_file, ".lead");
+		true_file = strcat(true_file, ".true");
+		misID_file = strcat(misID_file, ".misID");
 	}
 	
 
 	FILE* out_in_patient = fopen(debug_file, "w");
 	FILE* lor_output = fopen(lor_file, "w");
 	FILE* eng_output = fopen(eng_file, "w");
-	FILE* gold_out;
-	FILE* silver_out;
-	FILE* lead_out;
+	FILE* true_out;
+	FILE* misID_out;
 	if (LOR_GROUP) {
-		gold_out = fopen(gold_file, "w");
-		silver_out = fopen(silver_file, "w");
-		lead_out = fopen(lead_file, "w");
+		true_out = fopen(true_file, "w");
+		misID_out = fopen(misID_file, "w");
 	}
 	if ((out_in_patient == NULL) || (lor_output == NULL) || (eng_output == NULL)) {
 		printf("Unable to open output file for writing\n");
@@ -2432,46 +2886,37 @@ int main(int argc, char **argv) {
 	}
 
 	if (GRAPHVIZ_DEBUG) {
-		char* graph_file_name = (char*)malloc(sizeof(char) * (strlen(argv[3]) + 10));
-		strcpy(graph_file_name, argv[3]);
-		graph_file_name = strncat(graph_file_name, ".dot", strlen(argv[3] + 9));
+		char* graph_file_name = (char*)malloc(sizeof(char) * (strlen(argv[2]) + 10));
+		strcpy(graph_file_name, argv[2]);
+		graph_file_name = strncat(graph_file_name, ".dot", strlen(argv[2]) + 9);
 		debug_graphs = fopen(graph_file_name, "w");
 	}
 
-	double in_patient_distance = strtod(argv[4], NULL);
-	double detector_height = strtod(argv[5], NULL);
-	int run_in_patient = 0;
-	energy_cutoff = strtod(argv[6], NULL);
-	if ((in_patient_distance <= 0) || (energy_cutoff <= 0)) {
-		printf("Size and energy dimensions must be greater than zero\n");
-		printf("detector_rad = %lf\nsigma per scatter = %lf\n",in_patient_distance, energy_cutoff);
-		return 1;
-	}
-	if (detector_height > 0) {
-		run_in_patient = 1;
-	}
+	int run_in_patient = 1;
+	energy_cutoff = strtod(argv[3], NULL);
+	
 	if ((!test_expected_energy()) || (test_vec_to_phi() != 3) || (!test_factorial())) {
 		fprintf(stderr, "tests failed, exiting\n");
 		return 1;
 	}
 
 	fprintf(out_in_patient, "history number, in patient scatter occurance, ");
-	fprintf(out_in_patient, "algo miss dist transverse, algo miss dist longitudinal,");
-	fprintf(out_in_patient, "alpha 1, beta 1, gamma 1, delta 1, epsilon 1, ");
-	fprintf(out_in_patient, "alpha 2, beta 2, gamma 2, delta 2, epsilon 2, 0\n");
+	fprintf(out_in_patient, "empty, empty,");
+	fprintf(out_in_patient, "R1_1, R2_1, R3_1, R4_1, R5_1, ");
+	fprintf(out_in_patient, "R1_2, R2_2, R3_2, R4_2, R5_2, 0\n");
 
 	llist *in_det_hist = NULL;
-	llist *history = NULL;
+	// llist *history = NULL;
 	if (binary) {
-		history = load_history(in_histories, read_line_binary);
+		// history = load_history(in_histories, read_line_binary);
 		in_det_hist = load_historyb(in_det_histories, read_line_binary);
 	} else {
-		history = load_history(in_histories, read_line);
+		// history = load_history(in_histories, read_line);
 		in_det_hist = load_historyb(in_det_histories, read_line);
 	}
 	// some extra vars for calculating percentage of in paitent scatters
-	uint table[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
-	uint table_total = 0;
+	// uint table[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
+	// uint table_total = 0;
 	// uint numerator = 0;
 	// uint denominator = 0;
 	hist_num = 0;
@@ -2485,198 +2930,155 @@ int main(int argc, char **argv) {
 	// uint lead_IPS = 0;
 
 	// begin the primary loop over all histories
-	while (history != NULL) {
+	while (in_det_hist != NULL) {
 		// print an update to how far we have made it
 		if ((hist_num / 10000) * 10000 == hist_num) {
 			printf("history number: %u\n", hist_num);
 		}
 
-		// find the first annihilation gamma
-		int part_id = 0; // particle id
-		int in_patient_occurance = 0;
+
 		first_scat_hypot = 0;
 		second_scat_hypot = 0;
-		llist* curr_loc = list_head(history);
-		while ((!part_id) && (curr_loc != NULL)) {
-			part_id = find_annih_gamma((event*)curr_loc->data);
-			curr_loc = curr_loc->down;
-		}
-		// does the first annhilation gamma scatter, and how much
-		int scatters1 = in_patient(history, in_patient_distance, detector_height, part_id);
-		in_patient_occurance = in_patient_occurance || scatters1;
-		// find the second gamma 
-		int previous = part_id;
-		while (((part_id == previous) || (!part_id)) && (curr_loc != NULL)) {
-			part_id = find_annih_gamma((event*)curr_loc->data);
-			curr_loc = curr_loc->down;
-		}
-		// does the second annhilation gamma scatter, and how much
-		int scatters2 = in_patient(history, in_patient_distance, detector_height, part_id);
-		in_patient_occurance = in_patient_occurance || scatters2;
+		// llist* curr_loc = list_head(history);
 
-		if ((scatters1 < 3) && (scatters2 < 3)) {
-			// add one to the table of fates if not beyond measurements
-			table[scatters1][scatters2]++;
-			table_total++;
-		}
+		// does the first annhilation gamma scatter, and how much
+		int wasIPS = in_patient(in_det_hist);
+
 		// fmap(history, print_event);
-		if (in_patient_occurance && run_in_patient) {
-			fprintf(out_in_patient, "%i, 1, ", ((event*)(history->data))->number);
+		if (wasIPS && run_in_patient) {
+			fprintf(out_in_patient, "%i, 1, ", ((event*)(in_det_hist->data))->number);
 		} else {
-			fprintf(out_in_patient, "%i, 0, ", ((event*)history->data)->number);
+			fprintf(out_in_patient, "%i, 0, ", ((event*)(in_det_hist->data))->number);
 		}
 		// done determining in patient scattering
 
-		// only can run the endpoint finding if main history and detector history
-		// from the same history
-		if (((event*)in_det_hist->data)->number == ((event*)history->data)->number) {
-			// first we need to find the location of the endpoint scatters
+		// first we need to find the location of the endpoint scatters
 
-			// first_scat_hypot = 0; // energy differences between hypotheses
-			// second_scat_hypot = 0;
+		// first_scat_hypot = 0; // energy differences between hypotheses
+		// second_scat_hypot = 0;
 
-			// predicted_vs_real[0] = 0;
-			// predicted_vs_real[1] = 0;
-			// predicted_vs_real[2] = 0;
-			// predicted_vs_real[3] = 0;
-			if (in_patient_occurance) {
-				missed_reconstruction_IPS_mask = 0;
-			} else {
-				missed_reconstruction_IPS_mask = 1;
-			}
-
-			scatter** endpoints = find_endpoints_stat(in_det_hist, energy_cutoff);
-
-			if (endpoints == NULL) {
-				fprintf(out_in_patient, "%f, ", -1.); // trans miss
-				fprintf(out_in_patient, "%f, ", -1.); // longi miss
-
-
-			} else {
-				// create the LOR
-				lor* result = create_lor(endpoints[0], endpoints[1]);
-
-				// add the in patient scatters to the number T value for scatters
-				for (int i = 0; i < FIRST_N; i++) {
-					if (alpha_n_1[i] > 0) {
-						alpha_n_1[i] += scatters1;
-					}
-					if (alpha_n_2[i] > 0) {
-						alpha_n_2[i] += scatters2;
-					}
-				}
-
-				if (!LOR_GROUP) {
-					fprintf(lor_output, "%i, ", ((event*)(history->data))->number);
-					print_lor(lor_output, result);
-					fprintf(lor_output, "\n");
-				} else {
-					if (CUT_IPS && (scatters1 || scatters2)) {
-						// we had an in patient scatter, so don't output the data
-					} else {
-						if ((alpha_n_1[0] == 1) && (alpha_n_2[0] == 1)) {
-							fprintf(gold_out, "%i, ", ((event*)(history->data))->number);
-							print_lor(gold_out, result);
-							fprintf(gold_out, "\n");
-						} else if ((alpha_n_1[0] != 1) != (alpha_n_2[0] != 1)) {
-							fprintf(silver_out, "%i, ", ((event*)(history->data))->number);
-							print_lor(silver_out, result);
-							fprintf(silver_out, "\n");
-						} else if ((alpha_n_1[0] != 1) && (alpha_n_2[0] != 1)) {
-							fprintf(lead_out, "%i, ", ((event*)(history->data))->number);
-							print_lor(lead_out, result);
-							fprintf(lead_out, "\n");
-						}
-					}
-				}
-
-				// now we need to find the distance by which the endpoints miss
-				vec3d* annh_loc = find_annihilation_point(history);
-				if ((annh_loc == NULL) && (detector_height == -1.0)) {
-					annh_loc = three_vec(0.0, 0.0, 0.0);
-				}
-				double miss_dist_trans = first_scat_miss_transverse(result, annh_loc);
-				double miss_dist_long = first_scat_miss_longitudinal(result, annh_loc);
-				free(annh_loc);
-
-
-				fprintf(out_in_patient, "%f, ", miss_dist_trans);
-				fprintf(out_in_patient, "%f, ", miss_dist_long);
-
-				// to make above code simpler
-				// vec_print(endpoints[0]->loc, out_in_patient);
-				// vec_print(endpoints[1]->loc, out_in_patient);				
-				free_lor(result);
-
-			}
-			for (int i = 0; i < FIRST_N; i++) {
-				fprintf(out_in_patient, "%i, ", alpha_n_1[i]);
-				alpha_n_1[i] = -1;
-			} // alpha, beta ... of scatter set 1
-			for (int i = 0; i < FIRST_N; i++) {
-				fprintf(out_in_patient, "%i, ", alpha_n_2[i]);
-				alpha_n_2[i] = -1;
-			} // alpha, beta ... of scatter set 2
-			fprintf(out_in_patient, " 0\n"); // ending character
-
-			for (int i = 0; i < FIRST_N; i++) {
-				fprintf(eng_output, "%f, ", alpha_eng_distro_n_1[i]);
-				alpha_eng_distro_n_1[i] = -1;
-			} // alpha, beta ... of scatter set 1
-			for (int i = 0; i < FIRST_N; i++) {
-				fprintf(eng_output, "%f, ", alpha_eng_distro_n_2[i]);
-				alpha_eng_distro_n_2[i] = -1;
-			} // alpha, beta ... of scatter set 2
-			for (int i = 0; i < FIRST_N; i++) {
-				fprintf(eng_output, "%f, ", n_eng_distro_n_1[i]);
-				n_eng_distro_n_1[i] = -1;
-			} // alpha, beta ... of scatter set 1
-			for (int i = 0; i < FIRST_N; i++) {
-				fprintf(eng_output, "%f, ", n_eng_distro_n_2[i]);
-				n_eng_distro_n_2[i] = -1;
-			} // alpha, beta ... of scatter set 2
-			fprintf(eng_output, " 0\n"); // ending character
-
-			if (endpoints != NULL) {
-				delete_scatter(endpoints[0]);
-				delete_scatter(endpoints[1]);
-				free(endpoints);
-			}
-
+		// predicted_vs_real[0] = 0;
+		// predicted_vs_real[1] = 0;
+		// predicted_vs_real[2] = 0;
+		// predicted_vs_real[3] = 0;
+		if (wasIPS) {
+			missed_reconstruction_IPS_mask = 0;
 		} else {
+			missed_reconstruction_IPS_mask = 1;
+		}
+
+		scatter** endpoints = find_double_endpoints_stat(in_det_hist, energy_cutoff);
+		// scatter** endpoints = find_endpoints_stat(in_det_hist, energy_cutoff);
+
+		if (endpoints == NULL) {
 			fprintf(out_in_patient, "%f, ", -1.); // trans miss
 			fprintf(out_in_patient, "%f, ", -1.); // longi miss
-			for (int i = 0; i < FIRST_N; i++) {
-				fprintf(out_in_patient, "%i, ", -1);
-				alpha_n_1[i] = -1;
-			} // alpha, beta ... of scatter set 1
-			for (int i = 0; i < FIRST_N; i++) {
-				fprintf(out_in_patient, "%i, ", -1);
-				alpha_n_2[i] = -1;
-			} // alpha, beta ... of scatter set 2
-			fprintf(out_in_patient, " 0\n"); // ending character
-		}
 
 
-		fmap(history, delete_event);
-		delete_list(history);
-		if (binary) {
-			history = load_history(in_histories, read_line_binary);
 		} else {
-			history = load_history(in_histories, read_line);
-		}
-		hist_num++;
-		if (history != NULL) {		
-			if (((event*)history->data)->number > ((event*)in_det_hist->data)->number) {
-				fmap(in_det_hist, delete_event);
-				delete_list(in_det_hist);
-				if (binary) {
-					in_det_hist = load_historyb(in_det_histories, read_line_binary);
-				} else {
-					in_det_hist = load_historyb(in_det_histories, read_line);
+			// create the LOR
+			lor* result = create_lor(endpoints[0], endpoints[1]);
+
+			// add the in patient scatters to the number T value for scatters
+			for (int i = 0; i < FIRST_N; i++) {
+				if (alpha_n_1[i] > 0) {
+					alpha_n_1[i] += (wasIPS & 0x1);
+				}
+				if (alpha_n_2[i] > 0) {
+					alpha_n_2[i] += !(!(wasIPS & 0x2));
 				}
 			}
+
+			if (!LOR_GROUP) {
+				fprintf(lor_output, "%i, ", ((event*)(in_det_hist->data))->number);
+				print_lor(lor_output, result);
+				fprintf(lor_output, "\n");
+			} else {
+				if (CUT_IPS && (wasIPS)) {
+					// we had an in patient scatter, so don't output the data
+				} else {
+					if ((alpha_n_1[0] == 1) && (alpha_n_2[0] == 1)) {
+						fprintf(true_out, "%i, ", ((event*)(in_det_hist->data))->number);
+						print_lor(true_out, result);
+						fprintf(true_out, "\n");
+					} else {
+						fprintf(misID_out, "%i, ", ((event*)(in_det_hist->data))->number);
+						print_lor(misID_out, result);
+						fprintf(misID_out, "\n");
+					}
+				}
+			}
+
+			// now we need to find the distance by which the endpoints miss
+			
+			// double miss_dist_trans = first_scat_miss_transverse(result, annh_loc);
+			// double miss_dist_long = first_scat_miss_longitudinal(result, annh_loc);
+			// free(annh_loc);
+
+
+			fprintf(out_in_patient, "%f, ", -1.0); // trans miss
+			fprintf(out_in_patient, "%f, ", -1.0); // longi miss
+
+			free_lor(result);
+
 		}
+		for (int i = 0; i < FIRST_N; i++) {
+			fprintf(out_in_patient, "%i, ", alpha_n_1[i]);
+			alpha_n_1[i] = -1;
+		} // alpha, beta ... of scatter set 1
+		for (int i = 0; i < FIRST_N; i++) {
+			fprintf(out_in_patient, "%i, ", alpha_n_2[i]);
+			alpha_n_2[i] = -1;
+		} // alpha, beta ... of scatter set 2
+		fprintf(out_in_patient, " 0\n"); // ending character
+
+		for (int i = 0; i < FIRST_N; i++) {
+			fprintf(eng_output, "%f, ", alpha_eng_distro_n_1[i]);
+			alpha_eng_distro_n_1[i] = -1;
+		} // alpha, beta ... of scatter set 1
+		for (int i = 0; i < FIRST_N; i++) {
+			fprintf(eng_output, "%f, ", alpha_eng_distro_n_2[i]);
+			alpha_eng_distro_n_2[i] = -1;
+		} // alpha, beta ... of scatter set 2
+		for (int i = 0; i < FIRST_N; i++) {
+			fprintf(eng_output, "%f, ", n_eng_distro_n_1[i]);
+			n_eng_distro_n_1[i] = -1;
+		} // alpha, beta ... of scatter set 1
+		for (int i = 0; i < FIRST_N; i++) {
+			fprintf(eng_output, "%f, ", n_eng_distro_n_2[i]);
+			n_eng_distro_n_2[i] = -1;
+		} // alpha, beta ... of scatter set 2
+		fprintf(eng_output, " 0\n"); // ending character
+
+		if (endpoints != NULL) {
+			delete_scatter(endpoints[0]);
+			delete_scatter(endpoints[1]);
+			free(endpoints);
+		}
+
+		// } else {
+		// 	fprintf(out_in_patient, "%f, ", -1.); // trans miss
+		// 	fprintf(out_in_patient, "%f, ", -1.); // longi miss
+		// 	for (int i = 0; i < FIRST_N; i++) {
+		// 		fprintf(out_in_patient, "%i, ", -1);
+		// 		alpha_n_1[i] = -1;
+		// 	} // alpha, beta ... of scatter set 1
+		// 	for (int i = 0; i < FIRST_N; i++) {
+		// 		fprintf(out_in_patient, "%i, ", -1);
+		// 		alpha_n_2[i] = -1;
+		// 	} // alpha, beta ... of scatter set 2
+		// 	fprintf(out_in_patient, " 0\n"); // ending character
+		// }
+
+
+		fmap(in_det_hist, delete_event);
+		delete_list(in_det_hist);
+		if (binary) {
+			in_det_hist = load_history(in_det_histories, read_line_binary);
+		} else {
+			in_det_hist = load_history(in_det_histories, read_line);
+		}
+		hist_num++;
 
 	}
 	// if (denominator != 0) {
@@ -2685,15 +3087,6 @@ int main(int argc, char **argv) {
 	// 	printf("%f\n", percent);
 	// }
 
-	printf("Total events: %u\nFates:\n", hist_num);
-	for (int i = 0; i < 3; i++)
-	{
-		for (int j = 0; j < 3; j++)
-		{
-			printf("%4.4f		", (double)table[i][j]/(double)hist_num);
-		}
-		printf("\n");
-	}
 
 	printf("\n\nTotal scatters: %u\nElectron path scatters%u\n",total_scatters,path_scatters);
 	printf("Percentage with path: %lf\n", ((double)path_scatters/(double)total_scatters));
@@ -2702,7 +3095,6 @@ int main(int argc, char **argv) {
 
 	printf("Missed reconstructions (without IPS): %u\n", missed_reconstructions);
 
-	fclose(in_histories);
 	fclose(out_in_patient);
 	return 0;
 }
