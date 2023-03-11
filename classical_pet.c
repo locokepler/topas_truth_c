@@ -15,11 +15,13 @@
 #define MIN_SCAT_ENG 10.0 // minumum energy for a scatter to be observed
 #define E_TRIGGER 20.0 // energy in keV to hit trigger 
 
-#define TIME_UNCERT_CM 3.9
+#define TIME_UNCERT_CM 3.82
 #define SPC_UNCERT_PLANE 0.3 // uncertainty in the plane of the bore
 #define SPC_UNCERT_RAD 1.0  // uncertainty radial to the bore
 #define UNCERT_REP 12 // repetitions of addition to create random values
-#define P_PER_KEV 50 // photons per keV. Efficiencys have already been applied
+#define P_PER_KEV 30 // photons per keV. Efficiencys have already been applied
+// about 50 for NaI(Tl)
+// 30 for LYSO
 
 #define READ_DEBUG 0
 #define GENERAL_DEBUG 0
@@ -1547,7 +1549,7 @@ int main(int argc, char **argv) {
 	// begin the primary loop over all histories
 	while (in_det_hist != NULL) {
 		// print an update to how far we have made it
-		if ((run_num / 10000) * 10000 == run_num) {
+		if ((run_num / 1000000) * 1000000 == run_num) {
 			printf("run number: %u\n", run_num);
 		}
 		// if (tid[cur_thread] != -1) {
