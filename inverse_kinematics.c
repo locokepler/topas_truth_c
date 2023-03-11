@@ -13,7 +13,7 @@
 #define SPD_LGHT 29.98
 #define PI 3.141592653589
 #define FIRST_N 5
-#define LARGEST 100 // max scatters in a tree
+#define LARGEST 10 // max scatters in a tree
 #define SKIP 0 // number of scatters to skip at end of tree
 #define KEEP_SINGLES 1
 #define MAX_SINGLE_SIGMA 3.0 // max sigma for a scatter to be accepted as possible
@@ -27,15 +27,18 @@ double time_uncert_cm = 6.36; // in cm for one sigma, NOT ps or ns FWHM
 double spc_uncert = 0.1; // cm
 #define UNCERT_REP 12
 double E_per_switch = 1.0; // keV/switch
+int run_time_rand = 1;
 
 #define READ_DEBUG 0
 #define GENERAL_DEBUG 0
 #define TREE_DEBUG 0
+#define SCATTER_LIST_DEBUG 0
 #define GRAPHVIZ_DEBUG 0
 FILE* debug_graphs = NULL;
+FILE* debug_scatter_lists = NULL;
 uint graph_id;
-#define LOR_GROUP 1 // iff 1 outputs true and misID
-#define CUT_IPS 1 // do not output to Au/Ag/Pb files if an IPS happened
+#define LOR_GROUP 0 // iff 1 outputs true and misID
+#define CUT_IPS 0 // do not output to Au/Ag/Pb files if an IPS happened
 
 //OUTDATED if 0 output all found lors, 1 only with both T=R=1, 2 
 // only R!=T=1 for only 1, 3 only R!=T=1 for both 
@@ -1245,12 +1248,12 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 			fprintf(debug_graphs, "%u [label=\"end of check\"];\n", graph_id);
 			graph_id++;
 		}
-		if ((loc != NULL) && (path != NULL) && (loc->truth != NULL)) {
-			float* best_N_return = (float*)malloc(sizeof(float) * 2);
-			best_N_return[0] = loc->truth->true_n;
-			best_N_return[1] = loc->deposit;
-			path[0] = add_to_top(NULL, best_N_return);
-		}
+		// if ((loc != NULL) && (path != NULL) && (loc->truth != NULL)) {
+		// 	float* best_N_return = (float*)malloc(sizeof(float) * 2);
+		// 	best_N_return[0] = loc->truth->true_n;
+		// 	best_N_return[1] = loc->deposit;
+		// 	path[0] = add_to_top(NULL, best_N_return);
+		// }
 		return current;
 	}
 	if (best < current) {
@@ -1292,7 +1295,7 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 
 	// begin N vs alpha work
 	llist* continuing_path = NULL;
-	llist* best_continuing_path = NULL;
+	llist* best_path = NULL;
 	// end N vs alpha work
 
 	for (int i = 0; i < remain_count; i++) {
@@ -1352,7 +1355,7 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 		if ((combined_error < best) && (step_error < MAX_SINGLE_SIGMA)) {
 			// time to go one layer further
 			scatter** new_array = build_array_no_i(remaining, remain_count, i);
-			continuing_path = NULL;
+			// continuing_path = NULL;
 
 			if (GRAPHVIZ_DEBUG) {
 				fprintf(debug_graphs, "%u -> ", part_graph_id);
@@ -1366,20 +1369,24 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 
 			free(new_array);
 			if (below < better_find) {
+				// we found a better result
 				better_find = below;
 				if (below < best) {
 					best = below;
 				}
 
 				// begin N vs alpha work
-				if (best_continuing_path != NULL) {
-					fmap(best_continuing_path, free_null);
-					delete_list(best_continuing_path);
+				if (best_path != NULL) {
+					fmap(best_path, free_null);
+					delete_list(best_path);
+					best_path = NULL;
 				}
-				best_continuing_path = continuing_path;
+				best_path = continuing_path;
+				continuing_path = NULL;
 			} else {
 				fmap(continuing_path, free_null);
 				delete_list(continuing_path);
+				continuing_path = NULL;
 			}
 		}
 
@@ -1394,13 +1401,13 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 		// this seems like it should be loc->truth
 		// however, the list is misbehaving for the first call
 		if (origin->truth != NULL) {
-			best_N_return[0] = origin->truth->true_n;
-			best_N_return[1] = origin->truth->true_eng;
+			best_N_return[0] = loc->truth->true_n;
+			best_N_return[1] = loc->truth->true_eng;
 		} else {
 			best_N_return[0] = -1;
 			best_N_return[1] = -1;
 		}
-		path[0] = add_to_top(best_continuing_path, best_N_return);
+		path[0] = add_to_top(best_path, best_N_return);
 	}
 	// if (GRAPHVIZ_DEBUG) {
 	// 	fprintf(debug_graphs, "}");
@@ -1523,7 +1530,24 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 		len_hist_far = LARGEST + SKIP;
 	}
 
-
+	if (SCATTER_LIST_DEBUG) {
+		fprintf(debug_scatter_lists, "First gamma scatters:\n");
+		fprintf(debug_scatter_lists, "\tenergy order | true N |  true eng  | measured eng |      x      |      y      |      z      |\n");
+		for (int i = 0; i < len_hist_near; i++) {
+			if (scatters_near_short[i]->truth != NULL) {
+				fprintf(debug_scatter_lists, "\t%12i | %6i | %10f | %12f |", i, scatters_near_short[i]->truth->true_n, scatters_near_short[i]->truth->true_eng, scatters_near_short[i]->deposit);
+				fprintf(debug_scatter_lists, " %11f | %11f | %11f |\n", scatters_near_short[i]->loc->x, scatters_near_short[i]->loc->y, scatters_near_short[i]->loc->z);
+			}
+		}
+		fprintf(debug_scatter_lists, "Second gamma scatters:\n");
+		fprintf(debug_scatter_lists, "\tenergy order | true N |  true eng  | measured eng |      x      |      y      |      z      |\n");
+		for (int i = 0; i < len_hist_far; i++) {
+			if (scatters_far_short[i]->truth != NULL) {
+				fprintf(debug_scatter_lists, "\t%12i | %6i | %10f | %12f |", i, scatters_far_short[i]->truth->true_n, scatters_far_short[i]->truth->true_eng, scatters_far_short[i]->deposit);
+				fprintf(debug_scatter_lists, " %11f | %11f | %11f |\n", scatters_far_short[i]->loc->x, scatters_far_short[i]->loc->y, scatters_far_short[i]->loc->z);
+			}
+		}
+	}
 
 	llist* best_found_path = NULL;
 
@@ -1560,7 +1584,7 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 	}
 
 	// move the path into the array of N vs alpha, beta, etc.
-	llist* current_location = best_found_path;
+	llist* current_location = list_head(best_found_path);
 	if (best_scatter == NULL) {
 
 	} else if (best_find_array != NULL) {
@@ -1620,9 +1644,18 @@ scatter** double_tree_stat_iteration(llist* history_1, llist* history_2, double 
 			if (len_hist_1 == 1) {
 				// hist 1 has a single scatter
 				endpoints[0] = history_1->data;
+				if (((scatter*)(history_1->data))->truth != NULL) {
+					alpha_n_1[0] = ((scatter*)(history_1->data))->truth ->true_n;
+					alpha_eng_distro_n_1[0] = ((scatter*)(history_1->data))->truth ->true_eng;
+				}
 			}
 			if (len_hist_2 == 1) {
 				endpoints[1] = history_2->data;
+				if (((scatter*)(history_2->data))->truth != NULL) {
+					alpha_n_2[0] = ((scatter*)(history_2->data))->truth ->true_n;
+					alpha_eng_distro_n_2[0] = ((scatter*)(history_2->data))->truth ->true_eng;
+				}
+
 			}
 			if (endpoints[0] == NULL) {
 				endpoints[0] = multi_gamma_stat_iteration(history_1, history_2, sigma_per_scatter, alpha_n_1, alpha_eng_distro_n_1);
@@ -1722,11 +1755,30 @@ scatter** double_tree_stat_iteration(llist* history_1, llist* history_2, double 
 		len_hist_2 = LARGEST + SKIP;
 	}
 
+	if (SCATTER_LIST_DEBUG) {
+		fprintf(debug_scatter_lists, "First gamma scatters:\n");
+		fprintf(debug_scatter_lists, "\tenergy order | true N |  true eng  | measured eng |      x      |      y      |      z      |\n");
+		for (int i = 0; i < len_hist_1; i++) {
+			if (scatters_1_short[i]->truth != NULL) {
+				fprintf(debug_scatter_lists, "\t%12i | %6i | %10f | %12f |", i, scatters_1_short[i]->truth->true_n, scatters_1_short[i]->truth->true_eng, scatters_1_short[i]->deposit);
+				fprintf(debug_scatter_lists, " %11f | %11f | %11f |\n", scatters_1_short[i]->loc->x, scatters_1_short[i]->loc->y, scatters_1_short[i]->loc->z);
+			}
+		}
+		fprintf(debug_scatter_lists, "Second gamma scatters:\n");
+		fprintf(debug_scatter_lists, "\tenergy order | true N |  true eng  | measured eng |      x      |      y      |      z      |\n");
+		for (int i = 0; i < len_hist_2; i++) {
+			if (scatters_2_short[i]->truth != NULL) {
+				fprintf(debug_scatter_lists, "\t%12i | %6i | %10f | %12f |", i, scatters_2_short[i]->truth->true_n, scatters_2_short[i]->truth->true_eng, scatters_2_short[i]->deposit);
+				fprintf(debug_scatter_lists, " %11f | %11f | %11f |\n", scatters_2_short[i]->loc->x, scatters_2_short[i]->loc->y, scatters_2_short[i]->loc->z);
+			}
+		}
+	}
+
 
 
 	llist* best_found_path_1 = NULL;
 	llist* best_found_path_2 = NULL;
-	double best_combination = best_find_1 * best_find_1 + best_find_2 + best_find_2;
+	double best_combination = best_find_1 + best_find_2;
 
 	for (int j = 0; j < len_hist_1; j++) {
 
@@ -1804,12 +1856,12 @@ scatter** double_tree_stat_iteration(llist* history_1, llist* history_2, double 
 		int *t_vs_r;
 		float* E_t_vs_r;
 		if (i == 0) {
-			current_location = best_found_path_1;
+			current_location = list_head(best_found_path_1);
 			search_scatter = best_scatter_1;
 			t_vs_r = alpha_n_1;
 			E_t_vs_r = alpha_eng_distro_n_1;
 		} else {
-			current_location = best_found_path_2;
+			current_location = list_head(best_found_path_2);
 			search_scatter = best_scatter_2;
 			t_vs_r = alpha_n_2;
 			E_t_vs_r = alpha_eng_distro_n_2;
@@ -1998,7 +2050,10 @@ llist* build_scatters(llist* detector_history, int id) {
 					free(add_scatter->loc);
 					add_scatter->loc = rand_loc;
 					// distance variation set
-					add_scatter->time += time_var;
+					// SEE TIME VARIATION ON OR OFF
+					if (run_time_rand) {
+						add_scatter->time += time_var;
+					}
 					// done adding time randomness
 					// find the new energy (after blurring)
 					double new_eng = (eng_var * add_scatter->eng_uncert) + add_scatter->deposit;
@@ -2554,6 +2609,9 @@ scatter** find_double_endpoints_stat(llist* detector_history, double sigma_per_s
 			n_eng_distro_n_2[i] = -1;
 		}
 	}
+	if (SCATTER_LIST_DEBUG) {
+		fprintf(debug_scatter_lists, "\nHistory %i:\n", ((event*)(detector_history->data))->number);
+	}
 
 	// run the actual finding of endpoint 1
 	scatter** endpoints = double_tree_stat_iteration(scat_list1, scat_list2, sigma_per_scatter);
@@ -2816,7 +2874,7 @@ int main(int argc, char **argv) {
 				}
 			}
 			if (!strcasecmp(argv[i], "-t")) {
-				// change energy per scatter
+				// change time randomness
 				if (argc > (i + 1)) {
 					time_uncert_cm = strtod(argv[i+1], NULL);
 					printf("Time resolution set to %lf cm\n", time_uncert_cm);
@@ -2825,8 +2883,28 @@ int main(int argc, char **argv) {
 					return 1;
 				}
 			}
+			if (!strcasecmp(argv[i], "-d")) {
+				// change application of time randomness
+				run_time_rand = 0;
+				printf("Time randomness will not be applied\n");
+			}
 			if (!strcasecmp(argv[i], "-h")) {
-				printf("Help information goes here, you the user are out of luck!\n");
+				printf("\nHelp information for reverse kinematics:\n");
+				printf("\tExpects 3 arguments, then optional flags. The three\n");
+				printf("\targuments are:\n\t\t1) The DetectorTuple.pshp file containing ");
+				printf("the gamma\n\t\tand electron interactions from the detector volume\n");
+				printf("\t\t2) The location and name for the output files (file \n");
+				printf("\t\t extensions get added automatically)\n");
+				printf("\t\t3) The FOM per scatter, we have typically used 1.3\n");
+				printf("\tThese arguments can then be followed by optional flags:\n");
+				printf("\n\t-b -- sets code to expect tuple data in binary format\n");
+				printf("\n\t-E [value in keV] -- sets keV/switch for the run\n");
+				printf("\n\t-s [value in cm] -- sets spatial resolution for the run\n");
+				printf("\n\t-t [value in cm] -- sets 1 sigma timing resolution IN CM\n");
+				printf("\n\t-h\n\t-H -- display the help information\n");
+				printf("\n\t-d -- turns off applying time randomness. This is for use\n");
+				printf("\tin debugging, particularly understanding close misses\n");
+				printf("\t\n");
 			}
 		}
 	}
@@ -2890,6 +2968,12 @@ int main(int argc, char **argv) {
 		strcpy(graph_file_name, argv[2]);
 		graph_file_name = strncat(graph_file_name, ".dot", strlen(argv[2]) + 9);
 		debug_graphs = fopen(graph_file_name, "w");
+	}
+	if (SCATTER_LIST_DEBUG) {
+		char* scatter_file_name = (char*)malloc(sizeof(char) * (strlen(argv[2]) + 10));
+		strcpy(scatter_file_name, argv[2]);
+		scatter_file_name = strncat(scatter_file_name, ".scatters", strlen(argv[2]) + 9);
+		debug_scatter_lists = fopen(scatter_file_name, "w");
 	}
 
 	int run_in_patient = 1;
