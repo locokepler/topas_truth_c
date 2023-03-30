@@ -58,6 +58,9 @@ uint missed_reconstructions = 0; // add 1 for each pair of gammas that made it t
 uint missed_reconstruction_IPS_mask = 1; // stop the addition of a missed reconstruction
 // if the reconstruction would have been of an IPS
 
+int branch_scatters_1 = 0;
+int branch_scatters_2 = 0;
+
 
   
 // reads a line from the source file as an event
@@ -1937,7 +1940,7 @@ int closest_gamma(llist* history, vec3d* target) {
  * deposited at the location, not an estimate using the switchillator.
  * It returns the head of a new list of the scatter locations.
  */
-llist* build_scatters(llist* detector_history, int id) {
+llist* build_scatters(llist* detector_history, int id, int* count_of_scatters) {
 	if (detector_history == NULL) {
 		return NULL;
 	}
@@ -1971,7 +1974,7 @@ llist* build_scatters(llist* detector_history, int id) {
 				llist* check = list_head(checked_electrons);
 				while ((check != NULL) && (!electron_checked)) {
 					if (*((int*)check->data) == ((event*)detector_history->data)->id) {
-						// the current electron is in our list of handled variables
+						// the current electron is in our list of handled electrons
 						electron_checked = 1;
 					}
 					check = check->down;
@@ -1984,6 +1987,7 @@ llist* build_scatters(llist* detector_history, int id) {
 				int gamma_id = closest_gamma(detector_history, ((event*)detector_history->data)->location);
 				if (gamma_id == id) {
 					// time to add this electron to the scatter list
+					count_of_scatters[0]++;
 					vec3d* scatter_loc = vec_copy(((event*)detector_history->data)->location);
 					event* cur_event = (event*)detector_history->data;
 					event* next_event;
@@ -2147,7 +2151,7 @@ scatter** find_endpoints(llist* detector_history, double energy_percent) {
 		return NULL;
 	}
 
-	llist* scat_list = build_scatters(detector_history, first_id);
+	llist* scat_list = build_scatters(detector_history, first_id, &branch_scatters_1);
 	if (scat_list == NULL) {
 		return NULL;
 	}
@@ -2162,7 +2166,7 @@ scatter** find_endpoints(llist* detector_history, double energy_percent) {
 	fmap(scat_list, delete_scatter);
 	delete_list(scat_list);
 	// repeat for the second scatter
-	scat_list = build_scatters(detector_history, second_id);
+	scat_list = build_scatters(detector_history, second_id, &branch_scatters_2);
 	if (scat_list == NULL) {
 		return NULL;
 	}
@@ -2219,8 +2223,8 @@ scatter** find_endpoints_2hist(llist* detector_history, double energy_percent) {
 		return NULL;
 	}
 
-	llist* scat_list1 = build_scatters(detector_history, first_id);
-	llist* scat_list2 = build_scatters(detector_history, second_id);
+	llist* scat_list1 = build_scatters(detector_history, first_id, &branch_scatters_1);
+	llist* scat_list2 = build_scatters(detector_history, second_id, &branch_scatters_2);
 	if ((scat_list1 == NULL) || (scat_list2 == NULL)) {
 		if (scat_list1 == NULL) {
 			fmap(scat_list2, delete_scatter);
@@ -2324,8 +2328,8 @@ scatter** find_endpoints_ele_dir(llist* detector_history, double energy_percent)
 		return NULL;
 	}
 
-	llist* scat_list1 = build_scatters(detector_history, first_id);
-	llist* scat_list2 = build_scatters(detector_history, second_id);
+	llist* scat_list1 = build_scatters(detector_history, first_id, &branch_scatters_1);
+	llist* scat_list2 = build_scatters(detector_history, second_id, &branch_scatters_2);
 	if ((scat_list1 == NULL) || (scat_list2 == NULL)) {
 		if (scat_list1 == NULL) {
 			fmap(scat_list2, delete_scatter);
@@ -2432,8 +2436,8 @@ scatter** find_endpoints_stat(llist* detector_history, double sigma_per_scatter)
 		return NULL;
 	}
 
-	llist* scat_list1 = build_scatters(detector_history, first_id);
-	llist* scat_list2 = build_scatters(detector_history, second_id);
+	llist* scat_list1 = build_scatters(detector_history, first_id, &branch_scatters_1);
+	llist* scat_list2 = build_scatters(detector_history, second_id, &branch_scatters_2);
 	if ((scat_list1 == NULL) || (scat_list2 == NULL)) {
 		if (scat_list1 == NULL) {
 			fmap(scat_list2, delete_scatter);
@@ -2576,8 +2580,8 @@ scatter** find_double_endpoints_stat(llist* detector_history, double sigma_per_s
 		return NULL;
 	}
 
-	llist* scat_list1 = build_scatters(detector_history, first_id);
-	llist* scat_list2 = build_scatters(detector_history, second_id);
+	llist* scat_list1 = build_scatters(detector_history, first_id, &branch_scatters_1);
+	llist* scat_list2 = build_scatters(detector_history, second_id, &branch_scatters_2);
 	if ((scat_list1 == NULL) || (scat_list2 == NULL)) {
 		if (scat_list1 == NULL) {
 			fmap(scat_list2, delete_scatter);
@@ -3050,13 +3054,15 @@ int main(int argc, char **argv) {
 		} else {
 			missed_reconstruction_IPS_mask = 1;
 		}
+		branch_scatters_1 = 0;
+		branch_scatters_2 = 0;
 
 		scatter** endpoints = find_double_endpoints_stat(in_det_hist, energy_cutoff);
 		// scatter** endpoints = find_endpoints_stat(in_det_hist, energy_cutoff);
 
 		if (endpoints == NULL) {
-			fprintf(out_in_patient, "%f, ", -1.); // trans miss
-			fprintf(out_in_patient, "%f, ", -1.); // longi miss
+			fprintf(out_in_patient, "%i, ", branch_scatters_1); // trans miss
+			fprintf(out_in_patient, "%i, ", branch_scatters_2); // longi miss
 
 
 		} else {
@@ -3100,8 +3106,8 @@ int main(int argc, char **argv) {
 			// free(annh_loc);
 
 
-			fprintf(out_in_patient, "%f, ", -1.0); // trans miss
-			fprintf(out_in_patient, "%f, ", -1.0); // longi miss
+			fprintf(out_in_patient, "%i, ", branch_scatters_1); // trans miss
+			fprintf(out_in_patient, "%i, ", branch_scatters_2); // longi miss
 
 			free_lor(result);
 
