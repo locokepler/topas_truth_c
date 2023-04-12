@@ -60,6 +60,10 @@ uint missed_reconstruction_IPS_mask = 1; // stop the addition of a missed recons
 
 int branch_scatters_1 = 0;
 int branch_scatters_2 = 0;
+float first_FOM = -1;
+float second_FOM = -1;
+int used_scatters_1 = -1;
+int used_scatters_2 = -1;
 
 
   
@@ -1674,6 +1678,9 @@ scatter** double_tree_stat_iteration(llist* history_1, llist* history_2, double 
 	double best_find_1 = sigma_per_scatter * (len_hist_1 - SKIP);
 	double best_find_2 = sigma_per_scatter * (len_hist_2 - SKIP);
 
+	used_scatters_1 = (len_hist_1 - SKIP);
+	used_scatters_2 = (len_hist_2 - SKIP);
+
 	// lets check the trigger: The two scatter lists must trigger at least two
 	// different modules in phi
 	int near_module = 0;
@@ -1830,6 +1837,8 @@ scatter** double_tree_stat_iteration(llist* history_1, llist* history_2, double 
 			if ((try_1 < best_find_1) && (try_2 < reduced_second_FOM) && (combination < best_combination)) {
 				best_combination = combination;
 				best_scatter_1 = scatters_1_short[j];
+				first_FOM = try_1;
+				second_FOM = try_2;
 				if (best_found_path_1 != NULL) {
 					fmap(best_found_path_1, free_null);
 					delete_list(best_found_path_1);
@@ -2042,11 +2051,11 @@ llist* build_scatters(llist* detector_history, int id, int* count_of_scatters) {
 					// distance and time now have their variation size
 					// double dist_theta = PI * drand48(); // this seems ok but
 					// gives a higher density of results near the poles!
-					double dist_theta = (2 * acos((2.0 * drand48()) - 1.0)) - PI;
+					double dist_theta = (acos((2.0 * drand48()) - 1.0));// - (PI * 0.5);
 					double dist_phi = 2 * PI * drand48();
 					// distance variation direction
 					double dist_x = dist_var * cos(dist_phi) * sin(dist_theta);
-					double dist_y = dist_var * sin(dist_phi) * cos(dist_theta);
+					double dist_y = dist_var * sin(dist_phi) * sin(dist_theta);
 					double dist_z = dist_var * cos(dist_theta);
 					vec3d* dist_random = three_vec(dist_x, dist_y, dist_z);
 					vec3d* rand_loc = vec_add(add_scatter->loc, dist_random);
@@ -2989,9 +2998,9 @@ int main(int argc, char **argv) {
 	}
 
 	fprintf(out_in_patient, "history number, in patient scatter occurance, ");
-	fprintf(out_in_patient, "empty, empty,");
+	fprintf(out_in_patient, "scatters in branch 1, scatters in branch 2,");
 	fprintf(out_in_patient, "R1_1, R2_1, R3_1, R4_1, R5_1, ");
-	fprintf(out_in_patient, "R1_2, R2_2, R3_2, R4_2, R5_2, 0\n");
+	fprintf(out_in_patient, "R1_2, R2_2, R3_2, R4_2, R5_2, FOM 1, FOM 2, depth 1, depth 2\n");
 
 	llist *in_det_hist = NULL;
 	// llist *history = NULL;
@@ -3120,7 +3129,14 @@ int main(int argc, char **argv) {
 			fprintf(out_in_patient, "%i, ", alpha_n_2[i]);
 			alpha_n_2[i] = -1;
 		} // alpha, beta ... of scatter set 2
-		fprintf(out_in_patient, " 0\n"); // ending character
+		fprintf(out_in_patient, " %f, %f, ", first_FOM, second_FOM); 
+		first_FOM = -1;
+		second_FOM = -1;
+		// print the figure of merit of the two branches
+		fprintf(out_in_patient, "%i, %i\n", used_scatters_1, used_scatters_2);
+		// print the depth that the search went to for both
+		used_scatters_1 = -1;
+		used_scatters_2 = -1;
 
 		for (int i = 0; i < FIRST_N; i++) {
 			fprintf(eng_output, "%f, ", alpha_eng_distro_n_1[i]);
