@@ -1452,9 +1452,8 @@ lor* create_lor(scatter* a, scatter* b) {
 		b_space = 0.1;
 	}
 
-	new->transverse_uncert = sqrt(a_space * a_space + b_space * b_space);
-	new->long_uncert = sqrt(a_space * a_space + b_space * b_space + 
-							a->time_uncert * a->time_uncert + b->time_uncert * b->time_uncert);
+	new->transverse_uncert = (a_space + b_space) / 2;
+	new->long_uncert = sqrt(a->time_uncert * a->time_uncert + b->time_uncert * b->time_uncert) + (a_space + b_space) / 2;
 	free(center_subtraction);
 	free(center_half);
 	free(geometric_center);
