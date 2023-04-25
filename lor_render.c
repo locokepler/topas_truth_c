@@ -36,6 +36,9 @@ double (*long_func)(double) = NULL;
 double long_adjust = 1.0;
 double trans_adjust = 1.0;
 
+int long_binary = 0;
+int trans_binary = 0;
+
 unsigned long long int gauss_lookup_success = 0;
 unsigned long long int gauss_lookup_fail = 0;
 long int not_added = 0;
@@ -485,26 +488,26 @@ vec3d* lor_box_offset(lor* lor, double cutoff_sigma) {
 // x is value/sigma in a gaussian distribution. i.e. it already has been divided
 // by sigma
 double centered_normal(double x) {
-	static double table[NORMAL_TABLE_SIZE];
-	static int first_run = 0;
-	static double conversion;
-	// if this is our first run of the centered normal function we need to build
-	// the truth table. We will build it from 0 to the cutoff of the renderer
-	if (!first_run) {
-		conversion = NORMAL_TABLE_SIZE / master_copy->cutoff;
-		for (int i = 0; i < NORMAL_TABLE_SIZE; i++) {
-			double fraction = (double)i / conversion;
-			table[i] = exp(-0.5 * (fraction * fraction));
-		}
-		first_run = 1;
-	}
+	// static double table[NORMAL_TABLE_SIZE];
+	// static int first_run = 0;
+	// static double conversion;
+	// // if this is our first run of the centered normal function we need to build
+	// // the truth table. We will build it from 0 to the cutoff of the renderer
+	// if (!first_run) {
+	// 	conversion = NORMAL_TABLE_SIZE / master_copy->cutoff;
+	// 	for (int i = 0; i < NORMAL_TABLE_SIZE; i++) {
+	// 		double fraction = (double)i / conversion;
+	// 		table[i] = exp(-0.5 * (fraction * fraction));
+	// 	}
+	// 	first_run = 1;
+	// }
 	double fraction = x;
 	// double fraction = fabs(x);
 	// if (fraction >= master_copy->cutoff) {
 		// outside the volume of table
 		// gauss_lookup_fail++;
-		double exponent = -0.5 * (fraction * fraction);
-		return exp(exponent);
+	double exponent = -0.5 * (fraction * fraction);
+	return exp(exponent);
 	// }
 	// just look it up!
 	// gauss_lookup_success++;
@@ -832,10 +835,16 @@ void add_lor_plane(render* universe, lor* lor) {
 					// longitudinal distance from the lor center to the point
 					if (longitudinal < (universe->cutoff * lor->long_uncert)) {
 						// we are within the processing column (area of useful adding values)
-						double long_deviation = longitudinal / lor->long_uncert;
-						double lon_normal = centered_normal(long_deviation);
-						double trans_deviation = transverse / lor->transverse_uncert;
-						double trans_normal = centered_normal(trans_deviation);
+						double lon_normal = 1.0;
+						if (!long_binary) {
+							double long_deviation = longitudinal / lor->long_uncert;
+							lon_normal = centered_normal(long_deviation);
+						}
+						double trans_normal = 1.0;
+						if (!trans_binary) {
+							double trans_deviation = transverse / lor->transverse_uncert;
+							trans_normal = centered_normal(trans_deviation);
+						}
 						double total_value = lon_normal * trans_normal;
 
 						int index[3] = {i,j,k};
@@ -1049,6 +1058,15 @@ int main(int argc, char const *argv[])
 					fprintf(stderr, "WARN: -ta flag not followed by float\n");
 				}
 			}
+			if (!strncasecmp(argv[i], "-lb", 3)) {
+				// now set the longitudinal to binary
+				long_binary = 1;
+				printf("longitudinal set to binary\n");
+			}
+			if (!strncasecmp(argv[i], "-tb", 3)) {
+				// now set the transverse to binary
+				trans_binary = 1;
+				printf("transverse set to binary\n");			}
 		}
 	}
 	if (long_func == NULL) {
