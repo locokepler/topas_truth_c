@@ -704,6 +704,15 @@ void add_lor_plane(render* universe, lor* lor) {
 	// get the attenuation correction value
 	double attenuation = atten_correction(lor);
 
+	// // cos correction for angle to the plane
+	// THIS DOES NOT WORK IN A GOOD WAY
+	// vec3d z_hat;
+	// z_hat.x = 0;
+	// z_hat.y = 0;
+	// z_hat.z = 1;
+	// double correction_angle = vec_angle(&z_hat, lor->dir);
+	// attenuation  = attenuation * sin(correction_angle);
+
 	// high and low of each var now defines the maximum extent box, now we
 	// define the size of the elipse made by a cylindrical section of the LOR.
 	// the section is an elipse with semi-minor axis equal to the LOR radius and
