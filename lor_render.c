@@ -90,9 +90,9 @@ lor* read_lor(FILE* input) {
 	}
 	
 	new->center = three_vec(center_x, center_y, center_z);
-	vec3d* cleanup = three_vec(dir_x, dir_y, dir_z);
+	vec3d cleanup = three_vec(dir_x, dir_y, dir_z);
 	new->dir = vec_norm(cleanup);
-	free(cleanup);
+
 	new->long_uncert = longitudinal * long_adjust;
 	// fprintf(stdout, "%lf\n", new->long_uncert);
 	new->transverse_uncert = transverse * trans_adjust;
@@ -106,15 +106,13 @@ void* free_lor(void* in) {
 		return NULL;
 	}
 	lor* clear = (lor*)in;
-	free(clear->center);
-	free(clear->dir);
 	free(clear);
 	return NULL;
 }
 
 void print_lor(FILE* output, lor* lor) {
-	fprintf(output, "%f, %f, %f,", lor->center->x, lor->center->y, lor->center->z);
-	fprintf(output,  " %f, %f, %f,", lor->dir->x, lor->dir->y, lor->dir->z);
+	fprintf(output, "%f, %f, %f,", lor->center.x, lor->center.y, lor->center.z);
+	fprintf(output,  " %f, %f, %f,", lor->dir.x, lor->dir.y, lor->dir.z);
 	fprintf(output, " %f, %f", lor->long_uncert, lor->transverse_uncert);
 }
 
@@ -219,14 +217,13 @@ render* read_render_def(FILE* input) {
 	int worked;
 
 	worked = fscanf(input, "%lf,%lf,%lf,", &x, &y, &z); // render cube corner 1
-	vec3d* corner1 = three_vec(x, y, z);
+	vec3d corner1 = three_vec(x, y, z);
 	worked = fscanf(input, "%lf,%lf,%lf", &x, &y, &z); // render cube corner 2
-	vec3d* corner2 = three_vec(x, y, z);
-	vec3d* low_corner = three_vec(0,0,0);
-	vec3d* high_corner = three_vec(0,0,0);
-	low_high_corner(corner1, corner2, low_corner, high_corner);
-	free(corner1);
-	free(corner2);
+	vec3d corner2 = three_vec(x, y, z);
+	vec3d low_corner = three_vec(0,0,0);
+	vec3d high_corner = three_vec(0,0,0);
+	low_high_corner(&corner1, &corner2, &low_corner, &high_corner);
+
 	int a, b, c;
 	worked = fscanf(input, "%i,%i,%i", &a, &b, &c); // gets the number of voxels in each dimension
 	
@@ -241,9 +238,9 @@ render* read_render_def(FILE* input) {
 	}
 
 	// define the conversion from length space to voxel space
-	double x_convert = a / (high_corner->x - low_corner->x);
-	double y_convert = b / (high_corner->y - low_corner->y);
-	double z_convert = c / (high_corner->z - low_corner->z);
+	double x_convert = a / (high_corner.x - low_corner.x);
+	double y_convert = b / (high_corner.y - low_corner.y);
+	double z_convert = c / (high_corner.z - low_corner.z);
 
 
 	render* new = (render*)malloc(sizeof(render));
@@ -351,16 +348,16 @@ geometry* read_geometry(FILE* input) {
  * returns will likely still need to be rounded or similar to define the final
  * values.
  */
-vec3d* space_to_vox(vec3d* a, render* universe) {
-	if (a == NULL || universe == NULL) {
-		return NULL;
+vec3d space_to_vox(vec3d a, render* universe) {
+	if (universe == NULL) {
+		return three_vec(NAN, NAN, NAN);
 	}
 	// first handle the offset
-	vec3d* offsetless = vec_sub(a, universe->least_corner);
+	vec3d offsetless = vec_sub(a, universe->least_corner);
 	// now multiply by conversion
-	offsetless->x = offsetless->x * universe->conversion->x;
-	offsetless->y = offsetless->y * universe->conversion->y;
-	offsetless->z = offsetless->z * universe->conversion->z;
+	offsetless.x = offsetless.x * universe->conversion.x;
+	offsetless.y = offsetless.y * universe->conversion.y;
+	offsetless.z = offsetless.z * universe->conversion.z;
 
 	return offsetless;
 }
@@ -370,17 +367,16 @@ vec3d* space_to_vox(vec3d* a, render* universe) {
  * converts from voxel coordinates (typically orginating as integer indices) to
  * the spacial coordinates the LORs are given in (typically in cm)
  */
-vec3d* vox_to_space(vec3d* a, render* universe) {
-	if (a == NULL || universe == NULL) {
-		return NULL;
+vec3d vox_to_space(vec3d a, render* universe) {
+	if (universe == NULL) {
+		return three_vec(NAN, NAN, NAN);
 	}
-	double x = a->x / universe->conversion->x;
-	double y = a->y / universe->conversion->y;
-	double z = a->z / universe->conversion->z;
+	vec3d multiplied;
+	multiplied.x = a.x / universe->conversion.x;
+	multiplied.y = a.y / universe->conversion.y;
+	multiplied.z = a.z / universe->conversion.z;
 
-	vec3d* multiplied = three_vec(x, y, z);
-	vec3d* offset = vec_add(multiplied, universe->least_corner);
-	free(multiplied);
+	vec3d offset = vec_add(multiplied, universe->least_corner);
 
 	return offset;
 }
@@ -435,13 +431,12 @@ void coord_transfer(double* transfer, int* spots) {
  * Done using a simple dot product using the fact the direction vector is
  * a normalized vector
  */
-double pt_to_lor_long(lor* line, vec3d* pt) {
-	if (line == NULL || pt == NULL) {
+double pt_to_lor_long(lor* line, vec3d pt) {
+	if (line == NULL) {
 		return -1;
 	}
-	vec3d* to_point = vec_sub(pt, line->center);
+	vec3d to_point = vec_sub(pt, line->center);
 	double dist = vec_dot(to_point, line->dir);
-	free(to_point);
 	return fabs(dist);
 }
 
@@ -450,15 +445,13 @@ double pt_to_lor_long(lor* line, vec3d* pt) {
  * Gives the transverse distance from the center of the lor to the given point.
  * Done using a cross product and the fact the direction vector is normalized
  */
-double pt_to_lor_trans(lor* line, vec3d* pt) {
-	if (line == NULL || pt == NULL) {
+double pt_to_lor_trans(lor* line, vec3d pt) {
+	if (line == NULL) {
 		return -1;
 	}
-	vec3d* to_point = vec_sub(pt, line->center);
-	vec3d* cross = vec_cross(to_point, line->dir);
+	vec3d to_point = vec_sub(pt, line->center);
+	vec3d cross = vec_cross(to_point, line->dir);
 	double dist = vec_mag(cross);
-	free(to_point);
-	free(cross);
 	return fabs(dist);
 }
 
@@ -469,17 +462,15 @@ double pt_to_lor_trans(lor* line, vec3d* pt) {
  * z direction that the lor points in). This guarrentees that the entire volume
  * of the lor within the cutoff band is contained in the volume.
  */
-vec3d* lor_box_offset(lor* lor, double cutoff_sigma) {
-	vec3d* longitudinal = vec_scaler(lor->dir, lor->long_uncert * cutoff_sigma);
-	double x = (lor->dir->x > 0) - (lor->dir->x < 0); // 1 if heading in x dir, -1 if in -x dir 0 if 0
-	double y = (lor->dir->y > 0) - (lor->dir->y < 0);
-	double z = (lor->dir->z > 0) - (lor->dir->z < 0);
-	vec3d* trans_dir = three_vec(x, y, z);
-	vec3d* trans_vec = vec_scaler(trans_dir, cutoff_sigma * lor->transverse_uncert);
-	vec3d* total = vec_add(longitudinal, trans_vec);
-	free(longitudinal);
-	free(trans_dir);
-	free(trans_vec);
+vec3d lor_box_offset(lor* lor, double cutoff_sigma) {
+	vec3d longitudinal = vec_scaler(lor->dir, lor->long_uncert * cutoff_sigma);
+
+	vec3d trans_dir;
+	trans_dir.x = (lor->dir.x > 0) - (lor->dir.x < 0); // 1 if heading in x dir, -1 if in -x dir 0 if 0
+	trans_dir.y = (lor->dir.y > 0) - (lor->dir.y < 0);
+	trans_dir.z = (lor->dir.z > 0) - (lor->dir.z < 0);
+	vec3d trans_vec = vec_scaler(trans_dir, cutoff_sigma * lor->transverse_uncert);
+	vec3d total = vec_add(longitudinal, trans_vec);
 	return total;
 }
 
@@ -533,10 +524,9 @@ double atten_correction(lor* lor) {
 	if ((lor == NULL) || (objects == NULL)) {
 		return 1.0;
 	}
-	vec3d* dir_back = vec_sub(NULL, lor->dir);
-	ray* ray_1 = ray_build(vec_copy(lor->center), vec_norm(lor->dir));
-	ray* ray_2 = ray_build(vec_copy(lor->center), vec_norm(dir_back));
-	free(dir_back);
+	vec3d dir_back = vec_sub(three_vec(0,0,0), lor->dir);
+	ray* ray_1 = ray_build(lor->center, vec_norm(lor->dir));
+	ray* ray_2 = ray_build(lor->center, vec_norm(dir_back));
 	double atten = propagate(ray_1, objects);
 	atten += propagate(ray_2, objects);
 	ray_free(ray_1);
@@ -562,29 +552,22 @@ void add_lor(render* universe, lor* lor) {
 	// print_lor(stdout, lor);
 	// printf("\n");
 	// first define the volume in which we will be operating
-	vec3d* box_diagonal = lor_box_offset(lor, universe->cutoff); // the diagonal
+	vec3d box_diagonal = lor_box_offset(lor, universe->cutoff); // the diagonal
 	// of the box we need to operate in to catch the entire lor within the cutoff
 	// The diagonal will be parralell to the LOR
-	vec3d* corner1 = vec_add(lor->center, box_diagonal);
-	vec3d* corner2 = vec_sub(lor->center, box_diagonal);
-	vec3d* low_corner = three_vec(0,0,0);
-	vec3d* high_corner = three_vec(0,0,0);
-	low_high_corner(corner1, corner2, low_corner, high_corner);
-	free(box_diagonal);
-	free(corner1);
-	free(corner2);
-	vec3d* low_dbl_int = space_to_vox(low_corner, universe);
-	vec3d* high_dbl_int = space_to_vox(high_corner, universe);
-	free(low_corner);
-	free(high_corner);
-	int low_x = floor(low_dbl_int->x);
-	int low_y = floor(low_dbl_int->y);
-	int low_z = floor(low_dbl_int->z);
-	int high_x = ceil(high_dbl_int->x);
-	int high_y = ceil(high_dbl_int->y);
-	int high_z = ceil(high_dbl_int->z);
-	free(low_dbl_int);
-	free(high_dbl_int);
+	vec3d corner1 = vec_add(lor->center, box_diagonal);
+	vec3d corner2 = vec_sub(lor->center, box_diagonal);
+	vec3d low_corner;
+	vec3d high_corner;
+	low_high_corner(&corner1, &corner2, &low_corner, &high_corner);
+	vec3d low_dbl_int = space_to_vox(low_corner, universe);
+	vec3d high_dbl_int = space_to_vox(high_corner, universe);
+	int low_x = floor(low_dbl_int.x);
+	int low_y = floor(low_dbl_int.y);
+	int low_z = floor(low_dbl_int.z);
+	int high_x = ceil(high_dbl_int.x);
+	int high_y = ceil(high_dbl_int.y);
+	int high_z = ceil(high_dbl_int.z);
 	if (low_x < 0) {
 		low_x = 0;
 	}
@@ -607,12 +590,10 @@ void add_lor(render* universe, lor* lor) {
 		for (int j = low_y; j <= high_y; j++) {
 			for (int k = low_z; k <= high_z; k++) {
 				// iteration over the entire space in which the lor exists
-				vec3d* cur_vox = three_vec(i,j,k);
-				vec3d* cur_space = vox_to_space(cur_vox, universe);
+				vec3d cur_vox = three_vec(i,j,k);
+				vec3d cur_space = vox_to_space(cur_vox, universe);
 				double longitudinal = pt_to_lor_long(lor, cur_space);
 				double transverse = pt_to_lor_trans(lor, cur_space);
-				free(cur_vox);
-				free(cur_space);
 				if ((longitudinal < (universe->cutoff * lor->long_uncert))
 					&& (transverse < (universe->cutoff * lor->transverse_uncert))) {
 					double lon_deviation = longitudinal / lor->long_uncert;
@@ -653,32 +634,25 @@ void add_lor_plane(render* universe, lor* lor) {
 	// print_lor(stderr, lor);
 	// printf("\n");
 	// first define the volume in which we will be operating
-	vec3d* box_diagonal = lor_box_offset(lor, universe->cutoff); // the diagonal
+	vec3d box_diagonal = lor_box_offset(lor, universe->cutoff); // the diagonal
 	// of the box we need to operate in to catch the entire lor within the cutoff
 	// The diagonal will be parralell to the LOR
-	vec3d* corner1 = vec_add(lor->center, box_diagonal);
-	vec3d* corner2 = vec_sub(lor->center, box_diagonal);
-	vec3d* low_corner = three_vec(0,0,0);
-	vec3d* high_corner = three_vec(0,0,0);
-	low_high_corner(corner1, corner2, low_corner, high_corner);
+	vec3d corner1 = vec_add(lor->center, box_diagonal);
+	vec3d corner2 = vec_sub(lor->center, box_diagonal);
+	vec3d low_corner = three_vec(0,0,0);
+	vec3d high_corner = three_vec(0,0,0);
+	low_high_corner(&corner1, &corner2, &low_corner, &high_corner);
 	// creates a corner of low values and a corner of high values
-	free(box_diagonal);
-	free(corner1);
-	free(corner2);
-	vec3d* low_dbl_int = space_to_vox(low_corner, universe);
+	vec3d low_dbl_int = space_to_vox(low_corner, universe);
 	// the low corner in voxels
-	vec3d* high_dbl_int = space_to_vox(high_corner, universe);
+	vec3d high_dbl_int = space_to_vox(high_corner, universe);
 	// the high corner in voxels
-	free(low_corner);
-	free(high_corner);
-	int low_x = floor(low_dbl_int->x);
-	int low_y = floor(low_dbl_int->y);
-	int low_z = floor(low_dbl_int->z);
-	int high_x = ceil(high_dbl_int->x);
-	int high_y = ceil(high_dbl_int->y);
-	int high_z = ceil(high_dbl_int->z);
-	free(low_dbl_int);
-	free(high_dbl_int);
+	int low_x = floor(low_dbl_int.x);
+	int low_y = floor(low_dbl_int.y);
+	int low_z = floor(low_dbl_int.z);
+	int high_x = ceil(high_dbl_int.x);
+	int high_y = ceil(high_dbl_int.y);
+	int high_z = ceil(high_dbl_int.z);
 	if (low_x < 0) {
 		low_x = 0;
 	}
@@ -704,15 +678,6 @@ void add_lor_plane(render* universe, lor* lor) {
 	// get the attenuation correction value
 	double attenuation = atten_correction(lor);
 
-	// // cos correction for angle to the plane
-	// THIS DOES NOT WORK IN A GOOD WAY
-	// vec3d z_hat;
-	// z_hat.x = 0;
-	// z_hat.y = 0;
-	// z_hat.z = 1;
-	// double correction_angle = vec_angle(&z_hat, lor->dir);
-	// attenuation  = attenuation * sin(correction_angle);
-
 	// high and low of each var now defines the maximum extent box, now we
 	// define the size of the elipse made by a cylindrical section of the LOR.
 	// the section is an elipse with semi-minor axis equal to the LOR radius and
@@ -722,7 +687,7 @@ void add_lor_plane(render* universe, lor* lor) {
 	x_hat.x = 1;
 	x_hat.y = 0;
 	x_hat.z = 0;
-	double lor_angle = vec_angle(&x_hat, lor->dir);
+	double lor_angle = vec_angle(x_hat, lor->dir);
 	// angle between the xhat vector and the lor
 	
 	double semi_minor_len = lor->transverse_uncert * universe->cutoff;
@@ -731,36 +696,29 @@ void add_lor_plane(render* universe, lor* lor) {
 	double semi_major_len = (semi_minor_len) / fabs(cos(lor_angle));
 	// the semi major axis of the cylinder section of the LOR cylinder
 
-	vec3d* semi_major_dir = three_vec(0.0, lor->dir->y, lor->dir->z);
+	vec3d semi_major_dir = three_vec(0.0, lor->dir.y, lor->dir.z);
 	// the direction of the semi major axis of the elipse (in the direction of
 	// the lor flattened to the yz plane)
-	vec3d* semi_major_dir_norm = vec_norm(semi_major_dir);
+	vec3d semi_major_dir_norm = vec_norm(semi_major_dir);
 	// normalized vector pointing in the semi major direction
-	free(semi_major_dir);
-	vec3d* semi_major = vec_scaler(semi_major_dir_norm, semi_major_len);
-	free(semi_major_dir_norm);
+	vec3d semi_major = vec_scaler(semi_major_dir_norm, semi_major_len);
 	// the semi major axis with direction and amplitude
 
-	vec3d* semi_minor_dir = vec_cross(semi_major, &x_hat); // cross product of
+	vec3d semi_minor_dir = vec_cross(semi_major, x_hat); // cross product of
 	// the semi major axis and x hat to give a vector perpendicular to the
 	// semi major axis
-	vec3d* semi_minor_dir_norm = vec_norm(semi_minor_dir);
-	free(semi_minor_dir);
+	vec3d semi_minor_dir_norm = vec_norm(semi_minor_dir);
 	// normalize the semi minor direction
-	vec3d* semi_minor = vec_scaler(semi_minor_dir_norm, semi_minor_len);
-	free(semi_minor_dir_norm);
+	vec3d semi_minor = vec_scaler(semi_minor_dir_norm, semi_minor_len);
 	// semi minor axis with direction and magnitude
 
-	vec3d *elipse_box[4];
+	vec3d elipse_box[4];
 	elipse_box[0] = vec_add(semi_major, semi_minor);
 	elipse_box[1] = vec_sub(semi_major, semi_minor);
-	vec3d* negative_semi_major = vec_sub(NULL, semi_major);
+	vec3d negative_semi_major = vec_sub(three_vec(0,0,0), semi_major);
 	elipse_box[2] = vec_add(negative_semi_major, semi_minor);
 	elipse_box[3] = vec_sub(negative_semi_major, semi_minor);
 
-	free(semi_major);
-	free(semi_minor);
-	free(negative_semi_major);
 
 	// make two corners, they should enclose the entire working area
 	vec3d upper_corner;
@@ -768,41 +726,38 @@ void add_lor_plane(render* universe, lor* lor) {
 	upper_corner.z = 0.0;
 
 	for (int i = 0; i < 4; i++) {
-		if (elipse_box[i]->y > upper_corner.y) {
-			upper_corner.y = elipse_box[i]->y;
+		if (elipse_box[i].y > upper_corner.y) {
+			upper_corner.y = elipse_box[i].y;
 		}
-		if (elipse_box[i]->z > upper_corner.z) {
-			upper_corner.z = elipse_box[i]->z;
+		if (elipse_box[i].z > upper_corner.z) {
+			upper_corner.z = elipse_box[i].z;
 		}
-		free(elipse_box[i]);
 	}
 
-	double upper_corner_y_vox = upper_corner.y * universe->conversion->y;
-	double upper_corner_z_vox = upper_corner.z * universe->conversion->z;
+	double upper_corner_y_vox = upper_corner.y * universe->conversion.y;
+	double upper_corner_z_vox = upper_corner.z * universe->conversion.z;
 
-	vec3d* high_corner_vox = three_vec(0, upper_corner_y_vox, upper_corner_z_vox);
-	vec3d* low_corner_vox = three_vec(0, -upper_corner_y_vox, -upper_corner_z_vox);
+	vec3d high_corner_vox = three_vec(0, upper_corner_y_vox, upper_corner_z_vox);
+	vec3d low_corner_vox = three_vec(0, -upper_corner_y_vox, -upper_corner_z_vox);
 
-	vec_ceil(high_corner_vox);
-	vec_floor(low_corner_vox);
+	vec_ceil(&high_corner_vox);
+	vec_floor(&low_corner_vox);
 
 	for (int i = low_x; i <= high_x; i++) {
 		// find the area that we will be working in. This is the box defined by
 		// high and low corner vox centered on the lor at the current x. This
 		// volume is then further constrained by the bounding box.
-		double x_dist = (i / universe->conversion->x) + universe->least_corner->x - lor->center->x;
-		double displacement = x_dist / lor->dir->x; // need to make sure it is not a divide by 0
-		vec3d* travel = vec_scaler(lor->dir, displacement);
-		vec3d* center = vec_add(travel, lor->center);
-		vec3d* center_vox = space_to_vox(center, universe);
-		vec_ceil(center_vox);
-		int low_elipse_y = (int)low_corner_vox->y + (int)center_vox->y;
-		int high_elipse_y = (int)high_corner_vox->y + (int)center_vox->y;
-		int low_elipse_z = (int)low_corner_vox->z + (int)center_vox->z;
-		int high_elipse_z = (int)high_corner_vox->z + (int)center_vox->z;
+		double x_dist = (i / universe->conversion.x) + universe->least_corner.x - lor->center.x;
+		double displacement = x_dist / lor->dir.x; // need to make sure it is not a divide by 0
+		vec3d travel = vec_scaler(lor->dir, displacement);
+		vec3d center = vec_add(travel, lor->center);
+		vec3d center_vox = space_to_vox(center, universe);
+		vec_ceil(&center_vox);
+		int low_elipse_y  = (int)low_corner_vox.y  + (int)center_vox.y;
+		int high_elipse_y = (int)high_corner_vox.y + (int)center_vox.y;
+		int low_elipse_z  = (int)low_corner_vox.z  + (int)center_vox.z;
+		int high_elipse_z = (int)high_corner_vox.z + (int)center_vox.z;
 
-		free(travel);
-		free(center);
 
 		int y_start;
 		int y_end;
@@ -830,13 +785,12 @@ void add_lor_plane(render* universe, lor* lor) {
 			z_end = high_elipse_z;
 		}
 
-		free(center_vox);
 		
 		for (int j = y_start; j <= y_end; j++) {
 			for (int k = z_start; k <= z_end; k++) {
 				// iteration over the entire space in which the lor exists
-				vec3d* cur_vox = three_vec(i,j,k);
-				vec3d* cur_space = vox_to_space(cur_vox, universe);
+				vec3d cur_vox = three_vec(i,j,k);
+				vec3d cur_space = vox_to_space(cur_vox, universe);
 				double transverse = pt_to_lor_trans(lor, cur_space);
 				// transverse distance from the lor to the point
 				if (transverse < (universe->cutoff * lor->transverse_uncert)) {
@@ -864,14 +818,10 @@ void add_lor_plane(render* universe, lor* lor) {
 						pthread_mutex_unlock(&volume_lock);
 					}
 				}
-				free(cur_vox);
-				free(cur_space);
 				did_we_iterate = 1;
 			}
 		}
 	}
-	free(high_corner_vox);
-	free(low_corner_vox);
 	if (did_we_iterate) {
 		if (!did_we_add_this) {
 			pthread_mutex_lock(&volume_lock);

@@ -12,7 +12,7 @@ typedef struct event_ {
   uint number;
   double energy;
   double deposited;
-  vec3d* location;
+  vec3d location;
   double tof;
   int particle;
   char orgin[ORIGIN_BUFFER];
@@ -26,8 +26,9 @@ typedef struct scatter_truth_ {
 } scatter_truth;
 
 typedef struct scatter_ {
-	vec3d* loc;
-	vec3d* dir;
+	vec3d loc;
+	vec3d dir;
+	char has_dir;
 	double deposit;
 	double eng_uncert;
 	double space_uncert;

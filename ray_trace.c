@@ -30,10 +30,7 @@
  */
 
 // builds a ray structure
-ray* ray_build(vec3d* pos, vec3d* dir) {
-    if ((pos == NULL) || (dir == NULL)) {
-        return NULL;
-    }
+ray* ray_build(vec3d pos, vec3d dir) {
     ray* new = (ray*)malloc(sizeof(ray));
     if (new == NULL) {
         fprintf(stderr, "make_ray: malloc failed, likely fatal\n");
@@ -49,30 +46,16 @@ ray* ray_copy(ray* src) {
     if (src == NULL) {
         return NULL;
     }
-    vec3d* pos_cpy = vec_copy(src->pos);
-    vec3d* dir_cpy = vec_copy(src->dir);
-    return ray_build(pos_cpy, dir_cpy);
+    return ray_build(src->pos, src->dir);
 }
 
 // frees a ray structure
 void* ray_free(ray* src) {
-    if (src == NULL) {
-        return NULL;
-    }
-    if (src->dir != NULL) {
-        free(src->dir);
-    }
-    if (src->pos != NULL) {
-        free(src->pos);
-    }
     free(src);
     return NULL;
 }
 
-traversal* traversal_build(vec3d* intersect, double t) {
-    if (intersect == NULL) {
-        return NULL;
-    }
+traversal* traversal_build(vec3d intersect, double t) {
     traversal* new = (traversal*)malloc(sizeof(traversal));
     if (new == NULL) {
         fprintf(stderr, "traversal_build: malloc failed, likely fatal\n");
@@ -89,7 +72,6 @@ traversal* traversal_copy(traversal* src) {
 
 void traversal_free(traversal* src) {
     if (src != NULL) {        
-        free(src->intersection);
         free(src);
     }
 }
@@ -188,38 +170,35 @@ int coord_swap(vec3d* coord, int axis) {
  * defining the size along the x (size[0]) and y (size[1]) directions. This plane
  * is centered at the location given by center.
  */
-traversal* plane_intersect_rec(float size[2], int axis, vec3d* center_src, ray* propagate_src) {
-    if ((size == NULL) || (center_src == NULL) || (propagate_src == NULL)) {
+traversal* plane_intersect_rec(float size[2], int axis, vec3d center_src, ray* propagate_src) {
+    if ((size == NULL) || (propagate_src == NULL)) {
         return NULL;
     }
     // rotate everything so that it is all lined up
-    vec3d* center = vec_copy(center_src);
+    vec3d center = center_src;
     ray* propagate = ray_copy(propagate_src);
-    coord_swap(center, axis);
-    coord_swap(propagate->pos, axis);
-    coord_swap(propagate->dir, axis);
+    coord_swap(&center, axis);
+    coord_swap(&(propagate->pos), axis);
+    coord_swap(&(propagate->dir), axis);
     // find when the intersection should happen (when ray crosses z of plane)
-    double t = (center->z - propagate->pos->z) / propagate->dir->z;
-    double x_cross = propagate->pos->x + (propagate->dir->x * t);
+    double t = (center.z - propagate->pos.z) / propagate->dir.z;
+    double x_cross = propagate->pos.x + (propagate->dir.x * t);
     double x_hl = 0.5 * size[0];
-    if ((x_cross > (x_hl + center->x)) || (x_cross < (-x_hl + center->x))) {
+    if ((x_cross > (x_hl + center.x)) || (x_cross < (-x_hl + center.x))) {
         // we missed the x edge of the plane, no intersection
-        free(center);
         ray_free(propagate);
         return NULL;
     }
-    double y_cross = propagate->pos->y + (propagate->dir->y * t);
+    double y_cross = propagate->pos.y + (propagate->dir.y * t);
     double y_hl = 0.5 * size[1];
-    if ((y_cross > (y_hl + center->y)) || (y_cross < (-y_hl + center->y))) {
-        free(center);
+    if ((y_cross > (y_hl + center.y)) || (y_cross < (-y_hl + center.y))) {
         ray_free(propagate);
         return NULL;
     }
-    vec3d* intersection = three_vec(x_cross, y_cross, center->z);
+    vec3d intersection = three_vec(x_cross, y_cross, center.z);
     // now that we have the intersection we need to rotate everything back to
     // its original position (negative axis value)
-    coord_swap(intersection, -axis);
-    free(center);
+    coord_swap(&intersection, -axis);
     ray_free(propagate);
     traversal* output = traversal_build(intersection, t);
     return output;
@@ -233,35 +212,33 @@ traversal* plane_intersect_rec(float size[2], int axis, vec3d* center_src, ray* 
  * is centered at the location given by center.
  */
 
-traversal* plane_intersect_circle(float size, int axis, vec3d* center_src, ray* propagate_src) {
-    if ((center_src == NULL) || (propagate_src == NULL)) {
+traversal* plane_intersect_circle(float size, int axis, vec3d center_src, ray* propagate_src) {
+    if (propagate_src == NULL) {
         return NULL;
     }
     // rotate everything so that it is all lined up (as if the normal was zhat)
-    vec3d* center = vec_copy(center_src);
+    vec3d center = center_src;
     ray* propagate = ray_copy(propagate_src);
-    coord_swap(center, axis);
-    coord_swap(propagate->pos, axis);
-    coord_swap(propagate->dir, axis);
+    coord_swap(&center, axis);
+    coord_swap(&(propagate->pos), axis);
+    coord_swap(&(propagate->dir), axis);
     // find when the intersection should happen (when ray crosses z of plane)
-    double t = (center->z - propagate->pos->z) / propagate->dir->z;
-    double x_cross = propagate->pos->x + (propagate->dir->x * t);
-    double y_cross = propagate->pos->y + (propagate->dir->y * t);
+    double t = (center.z - propagate->pos.z) / propagate->dir.z;
+    double x_cross = propagate->pos.x + (propagate->dir.x * t);
+    double y_cross = propagate->pos.y + (propagate->dir.y * t);
     double rad2 = size * size;
-    double x_disp = x_cross - center->x;
-    double y_disp = y_cross - center->y;
+    double x_disp = x_cross - center.x;
+    double y_disp = y_cross - center.y;
     double disp2 = (x_disp * x_disp) + (y_disp * y_disp);
     if (rad2 < disp2) {
         // intersection not within the given radius
-        free(center);
         ray_free(propagate);
         return NULL;
     }
-    vec3d* intersection = three_vec(x_cross, y_cross, center->z);
+    vec3d intersection = three_vec(x_cross, y_cross, center.z);
     // now that we have the intersection we need to rotate everything back to
     // its original position (negative axis value)
-    coord_swap(intersection, -axis);
-    free(center);
+    coord_swap(&intersection, -axis);
     ray_free(propagate);
     traversal* output = traversal_build(intersection, t);
     return output;
@@ -305,10 +282,10 @@ traversal* exit_rectangular_prism(ray* path, shape* prism, int* full_crossing) {
         // get the offset of the plane we will check from the center of the shape
         double offset = prism->dim[i] * 0.5;
         // centerpoints of the planes
-        vec3d* direction_p = three_vec(prism->pos[0] + (offset * (i == 0)),
+        vec3d direction_p = three_vec(prism->pos[0] + (offset * (i == 0)),
                                         prism->pos[1] + (offset * (i == 1)),
                                         prism->pos[2] + (offset * (i == 2)));
-        vec3d* direction_m = three_vec(prism->pos[0] - (offset * (i == 0)),
+        vec3d direction_m = three_vec(prism->pos[0] - (offset * (i == 0)),
                                         prism->pos[1] - (offset * (i == 1)),
                                         prism->pos[2] - (offset * (i == 2)));
         traversal* exit1 = plane_intersect_rec(size, i + 1, direction_p, path);
@@ -351,8 +328,6 @@ traversal* exit_rectangular_prism(ray* path, shape* prism, int* full_crossing) {
         } else {
             traversal_free(exit2);
         }
-        free(direction_p);
-        free(direction_m);
     }
     // we have now checked all faces. If there is only one traversal with a
     // positive value (the original ray was inside of the box) then the distance
@@ -375,15 +350,14 @@ traversal* exit_rectangular_prism(ray* path, shape* prism, int* full_crossing) {
 
 // returns the two crossing t of a sphere (or circle if you project to 2d)
 // returns null if it is not 
-double* sphere_crossing(ray* path, vec3d* center, double r) {
-    if ((path == NULL) || (center == NULL)) {
+double* sphere_crossing(ray* path, vec3d center, double r) {
+    if (path == NULL) {
         return NULL;
     }
-    vec3d* st_ls_sph = vec_sub(path->pos, center);
+    vec3d st_ls_sph = vec_sub(path->pos, center);
     double u_dot_st_ls_sph = vec_dot(path->dir, st_ls_sph);
     double determinator = (u_dot_st_ls_sph * u_dot_st_ls_sph)
                         - (vec_dot(st_ls_sph, st_ls_sph) - (r * r));
-    free(st_ls_sph);
     if (determinator <= 0) {
         // no distance spent inside of the sphere
         return NULL;
@@ -412,9 +386,8 @@ traversal* exit_sphere(ray* path, shape* sphere, int* full_crossing){
     if (full_crossing != NULL) {
         full_crossing[0] = 0;
     }
-    vec3d* sphere_center = three_vec(sphere->pos[0], sphere->pos[1], sphere->pos[2]);
+    vec3d sphere_center = three_vec(sphere->pos[0], sphere->pos[1], sphere->pos[2]);
     double* crossings = sphere_crossing(path, sphere_center, sphere->dim[0]);
-    free(sphere_center);
     if (crossings == NULL) {
         return NULL;
     }
@@ -422,17 +395,15 @@ traversal* exit_sphere(ray* path, shape* sphere, int* full_crossing){
     double t_low  = crossings[0];
     free(crossings);
     if (t_low > 0) {
-        vec3d* dist = vec_scaler(path->dir, t_high);
+        vec3d dist = vec_scaler(path->dir, t_high);
         traversal* exit = traversal_build(vec_add(dist, path->pos), t_high - t_low);
-        free (dist);
         if (full_crossing != NULL) {
             full_crossing[0] = 1;
         }
         return exit;
     } else if (t_high > 0) {
-        vec3d* dist = vec_scaler(path->dir, t_high);
+        vec3d dist = vec_scaler(path->dir, t_high);
         traversal* exit = traversal_build(vec_add(dist, path->pos), t_high);
-        free (dist);    
         return exit;
     }
     return NULL;
@@ -452,18 +423,15 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
     if (full_crossing != NULL) {
         full_crossing[0] = 0;
     }
-    vec3d* center = three_vec(cyl->pos[0], cyl->pos[1], cyl->pos[2]);
+    vec3d center = three_vec(cyl->pos[0], cyl->pos[1], cyl->pos[2]);
     double half_height = cyl->dim[1] * 0.5;
-    vec3d* offset = three_vec(half_height * (cyl->axis == 1),
+    vec3d offset = three_vec(half_height * (cyl->axis == 1),
                                 half_height * (cyl->axis == 2),
                                 half_height * (cyl->axis == 3));
-    vec3d* plane1 = vec_add(center, offset);
-    vec3d* plane2 = vec_sub(center, offset);
+    vec3d plane1 = vec_add(center, offset);
+    vec3d plane2 = vec_sub(center, offset);
     traversal* exit1 = plane_intersect_circle(cyl->dim[0], cyl->axis, plane1, path);
     traversal* exit2 = plane_intersect_circle(cyl->dim[0], cyl->axis, plane2, path);
-    free(offset);
-    free(plane1);
-    free(plane2);
     traversal* plane_intersect = NULL;
     if ((exit1 != NULL) && (exit1->t > 0)) {
         plane_intersect = exit1;
@@ -471,7 +439,6 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
             if (full_crossing != NULL) {
                 full_crossing[0] = 1;
             }
-            free(center);
             if (exit1->t > exit2->t) {
                 double dist = exit1->t - exit2->t;
                 exit1->t = dist;
@@ -494,30 +461,27 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
     }
     // now for projected cylinder/sphere work. First rotate everything so that
     // the cylinder points in the z axis
-    vec3d* ray_dir = vec_copy(path->dir);
-    vec3d* ray_pos = vec_copy(path->pos);
-    coord_swap(center, cyl->axis);
-    coord_swap(ray_dir, cyl->axis);
-    coord_swap(ray_pos, cyl->axis);
+    vec3d ray_dir = path->dir;
+    vec3d ray_pos = path->pos;
+    coord_swap(&center, cyl->axis);
+    coord_swap(&ray_dir, cyl->axis);
+    coord_swap(&ray_pos, cyl->axis);
     // project onto xy plane (but keep the z avaliable for later)
 
-    double z_dir = ray_dir->z;
-    ray_dir->z = 0.0;
-    double z_pos = ray_pos->z;
-    ray_pos->z = 0.0;
-    double z_center = center->z;
-    center->z = 0.0;
+    double z_dir = ray_dir.z;
+    ray_dir.z = 0.0;
+    double z_pos = ray_pos.z;
+    ray_pos.z = 0.0;
+    double z_center = center.z;
+    center.z = 0.0;
     double flat_mag = vec_mag(ray_dir);
     double inverse_mag = 1.0 / flat_mag;
-    vec3d* ray_dir_nnorm = ray_dir;
-    ray_dir = vec_scaler(ray_dir_nnorm, inverse_mag);
-    free(ray_dir_nnorm);
+    ray_dir = vec_scaler(ray_dir, inverse_mag);
     ray* new_path = ray_build(ray_pos, ray_dir);
     double* flat_cyl = sphere_crossing(new_path, center, cyl->dim[0]);
     if (flat_cyl == NULL) {
         // no sphere crossing occured
         ray_free(new_path);
-        free(center);
         return plane_intersect;
     } else {
         // calculate the z intersection points
@@ -525,36 +489,38 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
         flat_cyl[0] *= inverse_mag;
         flat_cyl[1] *= inverse_mag;
         // re-add z component of position and direction for endpoint calcs
-        new_path->pos->z = z_pos;
-        new_path->dir->z = z_dir;
-        center->z = z_center;
+        new_path->pos.z = z_pos;
+        new_path->dir.z = z_dir;
+        center.z = z_center;
         // adjust x and y directions back to unit values.
-        new_path->dir->x *= flat_mag;
-        new_path->dir->y *= flat_mag;
-        vec3d* ends[2];
+        new_path->dir.x *= flat_mag;
+        new_path->dir.y *= flat_mag;
+        vec3d ends[2];
+        char ends_exist[2] = {0,0};
         int num_end = 0;
         for (int i = 0; i < 2; i++) {
             if (flat_cyl[i] > 0) {
                 // now to find the intersection point. We are still in the case
                 // where we can say the cylinder points in the z direction
-                vec3d* travel = vec_scaler(new_path->dir, flat_cyl[i]);
+                vec3d travel = vec_scaler(new_path->dir, flat_cyl[i]);
                 ends[i] = vec_add(travel, new_path->pos);
-                free(travel);
-                if (fabs(ends[i]->z - center->z) > half_height) {
-                    free(ends[i]);
-                    ends[i] = NULL;
+
+                if (fabs(ends[i].z - center.z) > half_height) {
+                    ends[i] = three_vec(NAN,NAN,NAN);
+                    ends_exist[i] = 0;
                     // removes the end if it is not within the cylinder height
                 } else {
                     num_end++;
+                    ends_exist[i] = 1;
                 }
             } else {
-                ends[i] = NULL;
+                ends[i] = three_vec(NAN,NAN,NAN);
+                ends_exist[i] = 0;
             }
         }
-        free(center);
         ray_free(new_path);
-        coord_swap(ends[0], -(cyl->axis));
-        coord_swap(ends[1], -(cyl->axis));
+        coord_swap(&(ends[0]), -(cyl->axis));
+        coord_swap(&(ends[1]), -(cyl->axis));
         // we now have the available ends: plane_intersect, ends[0], ends[1]
         // no more than 2 of 3 can exist
         if (num_end == 0) {
@@ -565,7 +531,7 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
         if (num_end == 1) {
             // one interaction occured, could be 0 or 1
             traversal* out;
-            if (ends[0] != NULL) {
+            if (ends_exist[0] != 0) {
                 out = traversal_build(ends[0], flat_cyl[0]);
             } else {
                 out = traversal_build(ends[1], flat_cyl[1]);
@@ -596,12 +562,10 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
             double dist = abs(flat_cyl[0] - flat_cyl[1]);
             if (flat_cyl[0] > flat_cyl[1]) {
                 free(flat_cyl);
-                free(ends[1]);
                 traversal* out = traversal_build(ends[0], dist);
                 return out;
             } else {
                 free(flat_cyl);
-                free(ends[0]);
                 traversal* out = traversal_build(ends[1], dist);
                 return out;
             }
@@ -658,8 +622,7 @@ double propagate(ray* path_src, geometry* all) {
                 distance += crossings[i]->t * next_shape->atten;
                 mask[i] = 1; // mask this geometry off
                 // move the ray
-                free(path->pos);
-                path->pos = vec_copy(crossings[i]->intersection);
+                path->pos = crossings[i]->intersection;
                 // clean up the crossings array
                 for (int j = 0; j <= i; j++) {
                     traversal_free(crossings[j]);
@@ -689,8 +652,7 @@ double propagate(ray* path_src, geometry* all) {
             // the closest geometry entry happened with best_find.
             mask[best_find] = 1;
             distance += crossings[best_find]->t * (all->geo[best_find])->atten;
-            free(path->pos);
-            path->pos = vec_copy(crossings[best_find]->intersection);
+            path->pos = crossings[best_find]->intersection;
             // clean up the crossings array
             for (int j = 0; j <= i; j++) {
                 traversal_free(crossings[j]);
@@ -720,10 +682,10 @@ int test_prism_1() {
     float pos[3] = {1.0, -1.0, 1.0};
     float dim[3] = {2.0, 4.0, 2.0};
     shape* box = shape_build(REC_PRISM, pos, dim, 0, 1.0);
-    vec3d* start = three_vec(1.0, 3.0, -2.0);
-    vec3d* point = three_vec(0.0, -2.0, 1.0);
-    vec3d* unit_point = vec_norm(point);
-    free(point);
+    vec3d start = three_vec(1.0, 3.0, -2.0);
+    vec3d point = three_vec(0.0, -2.0, 1.0);
+    vec3d unit_point = vec_norm(point);
+
     ray* path = ray_build(start, unit_point);
     geometry* world = geometry_build(&box, 1);
     double dist = propagate(path, world);
@@ -765,10 +727,10 @@ int test_prism_2() {
     float pos[3] = {1.0, -1.0, 1.0};
     float dim[3] = {22.0, 22.0, .1};
     shape* box = shape_build(REC_PRISM, pos, dim, 0, 1.0);
-    vec3d* start = three_vec(1.0, -7.0, 1.0);
-    vec3d* point = three_vec(0.0, 2.0, 0.0);
-    vec3d* unit_point = vec_norm(point);
-    free(point);
+    vec3d start = three_vec(1.0, -7.0, 1.0);
+    vec3d point = three_vec(0.0, 2.0, 0.0);
+    vec3d unit_point = vec_norm(point);
+
     ray* path = ray_build(start, unit_point);
     geometry* world = geometry_build(&box, 1);
     double dist = propagate(path, world);
@@ -809,10 +771,10 @@ int test_prism_3() {
     float pos[3] = {0.0, 0.0, 0.0};
     float dim[3] = {22.0, 22.0, .1};
     shape* box = shape_build(REC_PRISM, pos, dim, 0, 1.0);
-    vec3d* start = three_vec(0.0, 1.0, 0.0);
-    vec3d* point = three_vec(1.0, 1.0, 0.0);
-    vec3d* unit_point = vec_norm(point);
-    free(point);
+    vec3d start = three_vec(0.0, 1.0, 0.0);
+    vec3d point = three_vec(1.0, 1.0, 0.0);
+    vec3d unit_point = vec_norm(point);
+
     ray* path = ray_build(start, unit_point);
     geometry* world = geometry_build(&box, 1);
     double dist = propagate(path, world);
@@ -861,10 +823,10 @@ int test_sphere_1() {
     float pos[3] = {1.0, -1.0, 1.0};
     float dim[3] = {2.0, 4.0, 2.0};
     shape* sphere = shape_build(SPHERE, pos, dim, 0, 1.0);
-    vec3d* start = three_vec(0.0, 2.0, 1.0);
-    vec3d* point = three_vec(1.0, -1.0, 0.0);
-    vec3d* unit_point = vec_norm(point);
-    free(point);
+    vec3d start = three_vec(0.0, 2.0, 1.0);
+    vec3d point = three_vec(1.0, -1.0, 0.0);
+    vec3d unit_point = vec_norm(point);
+
     ray* path = ray_build(start, unit_point);
     geometry* world = geometry_build(&sphere, 1);
     double dist = propagate(path, world);
@@ -908,10 +870,10 @@ int test_cyl_1() {
     float pos[3] = {0.0, 0.0, 0.0};
     float dim[3] = {1.0, 2.0, 2.0}; // radius 1, height 2
     shape* cyl = shape_build(CYLINDER, pos, dim, 1, 1.0);
-    vec3d* start = three_vec(-1.0, -2.0, 0.0);
-    vec3d* point = three_vec(1.0, 1.0, 0.0);
-    vec3d* unit_point = vec_norm(point);
-    free(point);
+    vec3d start = three_vec(-1.0, -2.0, 0.0);
+    vec3d point = three_vec(1.0, 1.0, 0.0);
+    vec3d unit_point = vec_norm(point);
+
     ray* path = ray_build(start, unit_point);
     geometry* world = geometry_build(&cyl, 1);
     double dist = propagate(path, world);
@@ -958,10 +920,10 @@ int test_cyl_2() {
     float pos[3] = {1.0, -1.0, 1.0};
     float dim[3] = {1.0, 2.0, 2.0}; // radius 1, height 2
     shape* cyl = shape_build(CYLINDER, pos, dim, 3, 1.0);
-    vec3d* start = three_vec(1.0, -1.0, 1.0);
-    vec3d* point = three_vec(0.0, 0.0, 1.0);
-    vec3d* unit_point = vec_norm(point);
-    free(point);
+    vec3d start = three_vec(1.0, -1.0, 1.0);
+    vec3d point = three_vec(0.0, 0.0, 1.0);
+    vec3d unit_point = vec_norm(point);
+
     ray* path = ray_build(start, unit_point);
     geometry* world = geometry_build(&cyl, 1);
     double dist = propagate(path, world);

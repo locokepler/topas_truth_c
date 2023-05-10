@@ -22,12 +22,12 @@ struct _shape_holder {
 };
 
 struct _ray_trace {
-  vec3d* pos;
-  vec3d* dir;
+  vec3d pos;
+  vec3d dir;
 };
 
 struct _traversal {
-  vec3d* intersection;
+  vec3d intersection;
   double t;
 };
 
@@ -37,7 +37,7 @@ struct _multi_shape {
 };
 
 // builds a ray structure
-ray* ray_build(vec3d* pos, vec3d* dir);
+ray* ray_build(vec3d pos, vec3d dir);
 
 // frees a ray structure
 void* ray_free(ray* src);

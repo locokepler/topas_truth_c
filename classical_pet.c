@@ -29,8 +29,6 @@
 #define GRAPHVIZ_DEBUG 0
 FILE* debug_graphs = NULL;
 uint graph_id;
-#define LOR_GROUP 1 // iff 1 outputs gold, silver, and lead files
-#define CUT_IPS 1 // do not output to Au/Ag/Pb files if an IPS happened
 
 
 uint hist_num;
@@ -65,7 +63,6 @@ event* read_line(FILE* source) {
 	worked = fscanf(source, "%i", &particle);
 	// worked = fscanf(source, "%s", origin);
 	worked = fscanf(source, "%i", &count);
-
 	if (worked == EOF) {
 		return NULL;
 	}
@@ -93,6 +90,7 @@ event* read_line(FILE* source) {
 	return new_event;
 }
 
+// reads an event from a binary file
 event* read_line_binary(FILE* source) {
 
 	// begin to fill the event struct with information from .phsp
@@ -144,13 +142,13 @@ event* read_line_binary(FILE* source) {
 	return new_event;
 }
 
-
 // creates a new scatter structure and fills it
-scatter* new_scatter_old(vec3d* vector, double deposited, double time) {
+scatter* new_scatter_old(vec3d vector, double deposited, double time) {
 	scatter* new = (scatter*)malloc(sizeof(scatter));
 	new->deposit = deposited;
 	new->loc = vector;
-	new->dir = NULL;
+	new->dir = three_vec(0,0,0);
+	new->has_dir = 0;
 	new->time = time;
 	new->eng_uncert = -1;
 	new->space_uncert = -1;
@@ -159,13 +157,14 @@ scatter* new_scatter_old(vec3d* vector, double deposited, double time) {
 	return new;
 }
 
-scatter* new_scatter(vec3d* vector, vec3d* dir, double deposit, double time, double eng_uncert, double space_uncert, double time_uncert) {
+scatter* new_scatter(vec3d vector, vec3d dir, char has_dir, double deposit, double time, double eng_uncert, double space_uncert, double time_uncert) {
 	scatter* new = (scatter*)malloc(sizeof(scatter));
 	new->deposit = deposit;
 	new->eng_uncert = eng_uncert;
 	new->space_uncert = space_uncert;
 	new->loc = vector;
 	new->dir = dir;
+	new->has_dir = has_dir;
 	new->time = time;
 	new->time_uncert = time_uncert;
 	new->truth = NULL;
@@ -173,37 +172,20 @@ scatter* new_scatter(vec3d* vector, vec3d* dir, double deposit, double time, dou
 }
 
 scatter* copy_scatter(scatter* a) {
-	scatter* new = new_scatter(vec_copy(a->loc),vec_copy(a->dir), a->deposit, a->time, a->eng_uncert, a->space_uncert, a->time_uncert);
+	scatter* new = new_scatter(a->loc, a->dir, a->has_dir, a->deposit, a->time, a->eng_uncert, a->space_uncert, a->time_uncert);
 	if (a->truth != NULL) {
-		scatter_truth* new_true = (scatter_truth*)malloc(sizeof(scatter_truth));
-		new_true->true_eng  = a->truth->true_eng;
-		new_true->true_n    = a->truth->true_n;
-		new_true->true_time = a->truth->true_time;
-		new->truth = new_true;
+		new->truth = (scatter_truth*)malloc(sizeof(scatter_truth));
+		new->truth->true_eng  = a->truth->true_eng;
+		new->truth->true_n    = a->truth->true_n;
+		new->truth->true_time = a->truth->true_time;
 	}
 	return new;
 }
 
-event* duplicate_event(event* source) {
-	event* new_event = (event*)malloc(sizeof(event));
-	new_event->number		= source->number;
-	new_event->energy		= source->energy;
-	new_event->deposited	= source->deposited;
-	new_event->location		= vec_copy(source->location);
-	new_event->tof			= source->tof;
-	new_event->particle		= source->particle;
-	strncpy(new_event->orgin, source->orgin, ORIGIN_BUFFER);
-	new_event->id			= source->id;
-	return new_event;
-}
-
-// frees scatter malloc
 void* delete_scatter(void* in) {
 	if (in == NULL) {
 		return NULL;
 	}
-	free(((scatter*)in)->loc);
-	free(((scatter*)in)->dir);
 	if (((scatter*)in)->truth != NULL) {
 		free(((scatter*)in)->truth);
 	}
@@ -211,12 +193,26 @@ void* delete_scatter(void* in) {
 	return NULL;
 }
 
+event* duplicate_event(event* source) {
+	event* new_event = (event*)malloc(sizeof(event));
+	new_event->number		= source->number;
+	new_event->energy		= source->energy;
+	new_event->deposited	= source->deposited;
+	new_event->location		= source->location;
+	new_event->tof			= source->tof;
+	new_event->particle		= source->particle;
+	strncpy(new_event->orgin, source->orgin, ORIGIN_BUFFER);
+	new_event->id			= source->id;
+	return new_event;
+}
+
+
+
 // frees event malloc, returns NULL. For fmap
 void* delete_event(void* in) {
 	if (in == NULL) {
 		return NULL;
 	}
-	free(((event*)in)->location); // frees the allocated vector
 	free(in);
 	return NULL;
 }
@@ -243,8 +239,6 @@ void* free_lor(void* in) {
 		return NULL;
 	}
 	lor* clear = (lor*)in;
-	free(clear->center);
-	free(clear->dir);
 	free(clear);
 	return NULL;
 }
@@ -393,14 +387,12 @@ int double_equality(double a, double b, double range) {
  * by the trigger
  * Returns the angle in radians (from 0 to 2*pi), or an error value of -1
  */
-double vec_to_phi(vec3d* a) {
-	if (a == NULL) {
-		return -1;
-	} else if ((a->x == 0.0) && (a->y == 0.0)) {
+double vec_to_phi(vec3d a) {
+	if ((a.x == 0.0) && (a.y == 0.0)) {
 		// cannot find phi as we are on the z axis, it is undefined. Return error
 		return -1;
 	}
-	double angle = atan2(a->y,a->x);
+	double angle = atan2(a.y, a.x);
 	if (angle < 0) {
 		angle += 2 * PI;
 	}
@@ -414,7 +406,7 @@ int test_vec_to_phi() {
 	int success = 0;
 	case_a.x = 2.0;
 	case_a.y = 0.0;
-	double result = vec_to_phi(&case_a);
+	double result = vec_to_phi(case_a);
 	int run = double_equality(0.0, result, 0.0001);
 	if (run != 1) {
 		fprintf(stderr, "test_vec_to_phi: expected 0.0, got %lf\n",result);
@@ -422,7 +414,7 @@ int test_vec_to_phi() {
 	success += run;
 	case_b.x = 0.0;
 	case_b.y = 1.5;
-	result = vec_to_phi(&case_b);
+	result = vec_to_phi(case_b);
 	run = double_equality(PI * 0.5, result, 0.0001);
 	if (run != 1) {
 		fprintf(stderr, "test_vec_to_phi: expected pi/2, got %lf\n",result);
@@ -430,7 +422,7 @@ int test_vec_to_phi() {
 	success += run;
 	case_c.x = 1.0;
 	case_c.y = -1.0;
-	result = vec_to_phi(&case_c);
+	result = vec_to_phi(case_c);
 	run = double_equality(PI * 1.75, result, 0.0001);
 	if (run != 1) {
 		fprintf(stderr, "test_vec_to_phi: expected 5pi/4, got %lf\n",result);
@@ -451,7 +443,7 @@ int test_vec_to_phi() {
  * final one.
  */
 int phi_trigger(scatter* a, uint modules) {
-	if (a == NULL || a->loc == NULL) {
+	if (a == NULL) {
 		return 0; // no trigger, but also lets not break anything
 	}
 	if (a->deposit < E_TRIGGER) {
@@ -495,11 +487,11 @@ uint inside_radius(double distance, double height, event* event) {
 		// printf("not a gamma\n");
 		return 0;
 	}
-	double radius2 = event->location->x * event->location->x 
-						+ event->location->y * event->location->y;
+	double radius2 = event->location.x * event->location.x 
+						+ event->location.y * event->location.y;
 	// printf("particle %i, distance^2 %d", event->particle, event->count);
 	if (sqrt(radius2) < distance) {
-		if (fabs(event->location->z) < height){
+		if (fabs(event->location.z) < height){
 			return 1;
 		}
 		return 0;
@@ -584,14 +576,12 @@ vec3d* find_annihilation_point(llist *history) {
  * finds the distance from a line defined by the start and end points to a
  * given point. The distance is how far the minimum distance is.
  */
-double line_to_dot_dist(vec3d* start, vec3d* end, vec3d* point) {
-	vec3d* num_first_term = vec_sub(start, end);
-	vec3d* num_sec_term = vec_sub(start, point);
+double line_to_dot_dist(vec3d start, vec3d end, vec3d point) {
+	vec3d num_first_term = vec_sub(start, end);
+	vec3d num_sec_term = vec_sub(start, point);
 	// vec3* denom_vec = vec_sub(end, start);
 	double numerator = vec_mag(vec_cross(num_first_term, num_sec_term));
 	double denomenator = vec_mag(num_first_term);
-	free(num_first_term);
-	free(num_sec_term);
 	// free(denom_vec);
 	return numerator / denomenator;
 }
@@ -654,9 +644,9 @@ double expected_uncert_b(double b, double theta, double uncert_b, double uncert_
 	// first calculate the angle at b
 
 	// get the vector from b->a
-	vec3d* ab = vec_sub(b->loc, a->loc);
+	vec3d ab = vec_sub(b->loc, a->loc);
 	// get the vector from b->c
-	vec3d* bc = vec_sub(c->loc, b->loc);
+	vec3d bc = vec_sub(c->loc, b->loc);
 	// calculate the angle itself
 	double theta = vec_angle(ab, bc);
 
@@ -673,10 +663,6 @@ double expected_uncert_b(double b, double theta, double uncert_b, double uncert_
 		return -1.; // we can't tell what energy the gamma had, so return easy
 		// to spot garbage
 	}
-
-	// free the used vectors
-	free(ab);
-	free(bc);
 
 
 	// calculate the incoming gamma energy. 
@@ -747,9 +733,9 @@ int test_expected_energy() {
 	// then goes to C.
 	int pass = 1;
 
-	vec3d* point_a = three_vec(0., 0., 0.);
-	vec3d* point_b = three_vec(0., 3., 0);
-	vec3d* point_c = three_vec(0., 2., 1.73205);
+	vec3d point_a = three_vec(0., 0., 0.);
+	vec3d point_b = three_vec(0., 3., 0);
+	vec3d point_c = three_vec(0., 2., 1.73205);
 	double deposit_a = 127.405;
 	double deposit_b = 203.1654;
 	scatter* scatter_a = new_scatter_old(point_a, deposit_a, -1);
@@ -991,159 +977,12 @@ scatter* multi_gamma_iterator(llist* history1, llist* history2, double energy_pe
 // dot product of vector first->second locations and the electron direction
 // at second
 double scatter_dir_dot(scatter* first, scatter* second) {
-	if (second->dir == NULL) {
-		return -1;
-	}
-	vec3d* a_less_b = vec_sub(first->loc, second->loc);
+	vec3d a_less_b = vec_sub(first->loc, second->loc);
 	double dot = vec_dot(a_less_b, second->dir);
-	free(a_less_b);
 	return dot;
 }
 
-/*
- * takes two scattering histories. Searches for the best guess as to the first
- * scatter in the first history. To do this it uses the locations in the second
- * history as endpoints of the LOR, then proceeds to do a 3 point approximation
- * of the kinematics of the Compton scattering. It chooses the scatter with the
- * smallest deviation from the expected energy (by probability of deviation).
- * Any results that would requrire the electron to point in a non-physical
- * direction are rejected.
- * 
- * inputs:
- * history1: a list of scatters with location, deposited energy, uncertanty in
- * position, and uncertanty in deposited energy. This is the locations where
- * the first scatter is being seached for. Only runs if this has 2 or more
- * scatters in it
- * 
- * history2: same type as history1, just the locations where the other side of
- * the LOR should be. Only runs if this has 1 or more scatters in it.
- * 
- * energy_percent: what the percentage cut is for acceptable scattering
- */
-scatter* multi_gamma_ele_iterator(llist* history_near, llist* history_far, double energy_percent) {
-	if ((history_near == NULL) || (history_far == NULL)) {
-		fprintf(stderr, "multi_gamma_ele_iterator: empty history given");
-		return NULL;
-	}
 
-	// first is setup. Best scatter found, behavior for undersize histories,
-	// copy histories into arrays for fast access.
-
-	double best_find = 0;
-
-	scatter* best_scatter = NULL;
-
-	int len_hist_near = list_length(history_near);
-	int len_hist_far = list_length(history_far);
-
-	if (len_hist_near < 2) {
-		// history1 is too short to run the iteration process.
-		return NULL;
-	}
-	if (len_hist_far < 1) {
-		// idk if it is possible to even get here, but we can't continue if we do
-		return NULL;
-	}
-
-	// time to turn the scattering list into an array for fast access
-	scatter** scatters_near = (scatter**)malloc(len_hist_near * sizeof(scatter*));
-	for (int i = 0; i < len_hist_near; i++)	{
-		scatters_near[i] = (scatter*)history_near->data;
-		history_near = history_near->down;
-	}
-
-	scatter** scatters_far = (scatter**)malloc(len_hist_far * sizeof(scatter*));
-	for (int i = 0; i < len_hist_far; i++)	{
-		scatters_far[i] = (scatter*)history_far->data;
-		history_far = history_far->down;
-	}
-
-	// a couple of variables for debug information
-	double hypoth;
-	double second_best = 0;
-	int run_num;
-	if (predicted_vs_real[0] == 0) {
-		run_num = 0;
-	} else {
-		run_num = 1;
-	}
-
-	// time to iterate over all of the possible combinations. The avaliable
-	// configurations are:
-	// for all i in len_hist2 and all of j != k in len_hist1
-	for (int i = 0; i < len_hist_far; i++) {
-		for (int j = 0; j < len_hist_near; j++) {
-			double i_j_dot = scatter_dir_dot(scatters_far[i], scatters_near[j]);
-			vec3d* in = vec_sub(scatters_far[i]->loc, scatters_near[j]->loc);
-			for (int k = 0; k < len_hist_near; k++) {
-				// can only do 3 point checks with j and k not being the same
-				if (j != k) {
-					// first check if the direction is physical
-					if (((i_j_dot <= 0) && (i_j_dot != -1)) &&
-							(scatter_dir_dot(scatters_near[k], scatters_near[j]) <= 0)) {
-						vec3d* out = vec_sub(scatters_near[j]->loc, scatters_near[k]->loc);
-						vec3d* gamma_cross = vec_cross(in, out);
-						vec3d* gamma_cross_norm = vec_norm(gamma_cross);
-						if (gamma_cross != NULL) {
-							free(gamma_cross);
-						}
-						vec3d* ele_dir = vec_norm(scatters_near[j]->dir);
-						vec3d* plane = vec_cross(gamma_cross_norm, ele_dir);
-						if (ele_dir != NULL)
-							free(ele_dir);
-						free(gamma_cross_norm);
-						free(out);
-						// the magnitude of plane is equal to the cos of the angle between the plane of the gamma
-						// scattering and the direction of the electron
-
-						if ((plane == NULL) || (vec_mag(plane) > 0.0)) {
-
-							hypoth = expected_energy_b(scatters_far[i], scatters_near[j], scatters_near[k], NULL);
-							// check if the hypothesis is better than previous
-							if (fabs(hypoth - ELECTRON_MASS) < fabs(best_find - ELECTRON_MASS)) {
-								// the current hypthesis is better than the previous best
-								if (GENERAL_DEBUG) {
-									printf("multi_gamma_ele_iterator: new best scatter found:\n");
-									printf("%f keV at ", hypoth);
-									vec_print(scatters_near[j]->loc, stdout);
-									printf("\n");
-								}
-								second_best = best_find;
-								best_find = hypoth;
-								best_scatter = scatters_near[j];
-								predicted_vs_real[(2 * run_num)] = len_hist_near - j;
-								predicted_vs_real[(2 * run_num) + 1] = len_hist_near - k;
-							}				
-						}
-						free(plane);
-					}
-				}
-			}
-			free(in);
-		}
-	}
-
-	if (first_scat_hypot == 0) {
-		first_scat_hypot = fabs(best_find - second_best);
-	} else {
-		second_scat_hypot = fabs(best_find - second_best);
-	}
-
-	free(scatters_near);
-	free(scatters_far);
-	// done iterating, now have the best scatter found in the list
-	if (fabs(best_find - ELECTRON_MASS) < (energy_percent * ELECTRON_MASS)) {
-		// the result was within the energy cut
-		if (GENERAL_DEBUG) {
-			printf("multi_gamma_ele_iterator: best scatter solution found at %f kev at:\n", best_find);
-			vec_print(best_scatter->loc, stdout);
-			printf("\n");
-		}
-		return best_scatter;
-	}
-	// no result found within the energy cutoff
-	return NULL;
-}
 
 /* build_array_no_i:
  * takes an array of scatters of length source_len and returns a copy of the
@@ -1171,8 +1010,8 @@ scatter** build_array_no_i(scatter** source, uint source_len, uint i) {
  * from a given history. The gamma is required to be from an annihilation
  * If the search fails returns zero
  */
-int closest_gamma(llist* history, vec3d* target) {
-	if ((history == NULL) || (target == NULL)) {
+int closest_gamma(llist* history, vec3d target) {
+	if (history == NULL) {
 		return 0;
 	}
 	history = list_head(history);
@@ -1241,7 +1080,7 @@ scatter** find_endpoints(llist* detector_history, double energy_percent) {
 			if (!electron_checked) {
                 // ok add it as a scatter
                 event* cur_event = (event*)detector_history->data;
-                vec3d* scatter_loc = vec_copy(cur_event->location);
+                vec3d scatter_loc = cur_event->location;
                 scatter* add = NULL;
 
                 // determine random variation
@@ -1259,32 +1098,24 @@ scatter** find_endpoints(llist* detector_history, double energy_percent) {
                 // assuming that the center of the bore is on the z axis
                 // the radial direction (taken as the z_rand value) is along that
                 // vector
-                vec3d* radial = three_vec(scatter_loc->x, scatter_loc->y, 0);
-                vec3d* radial_norm = vec_norm(radial);
-                free(radial);
+                vec3d radial = three_vec(scatter_loc.x, scatter_loc.y, 0);
+                vec3d radial_norm = vec_norm(radial);
+
                 radial = vec_scaler(radial_norm, z_rand * SPC_UNCERT_RAD);
                 // radial blurring calculated
-                vec3d* bore = three_vec(0,0,1);
+                vec3d bore = three_vec(0,0,1);
                 // direction of the bore
-                vec3d* circumfrence = vec_cross(radial_norm, bore);
+                vec3d circumfrence = vec_cross(radial_norm, bore);
                 // direction around the circumfrence at the scatter location
-                vec3d* circum_norm = vec_norm(circumfrence);
-                vec3d* circum_rand = vec_scaler(circum_norm, y_rand * SPC_UNCERT_PLANE);
+                vec3d circum_norm = vec_norm(circumfrence);
+                vec3d circum_rand = vec_scaler(circum_norm, y_rand * SPC_UNCERT_PLANE);
                 // blurring around the direction of the circumfrence
-                circum_rand->z += x_rand * SPC_UNCERT_PLANE;
+                circum_rand.z += x_rand * SPC_UNCERT_PLANE;
                 // blurring along the direction of the bore
-                vec3d* rand_space = vec_add(radial, circum_rand);
+                vec3d rand_space = vec_add(radial, circum_rand);
                 // combine all of the blurring
-                vec3d* rand_loc = vec_add(scatter_loc, rand_space);
+                vec3d rand_loc = vec_add(scatter_loc, rand_space);
                 // add the blurring to the scatter location
-                free(radial);
-                free(radial_norm);
-                free(bore);
-                free(circumfrence);
-                free(circum_norm);
-                free(circum_rand);
-                free(rand_space);
-                free(scatter_loc);
 
                 // add time randomness
                 time_rand *= TIME_UNCERT_CM / SPD_LGHT;
@@ -1293,7 +1124,7 @@ scatter** find_endpoints(llist* detector_history, double energy_percent) {
                 eng_rand *= eng_uncert;
 
 
-                add = new_scatter(rand_loc, NULL, cur_event->energy + eng_rand, cur_event->tof + time_rand, eng_uncert, SPC_UNCERT_PLANE/2.0, TIME_UNCERT_CM);
+                add = new_scatter(rand_loc, three_vec(NAN,NAN,NAN), 0, cur_event->energy + eng_rand, cur_event->tof + time_rand, eng_uncert, SPC_UNCERT_PLANE/2.0, TIME_UNCERT_CM);
                 if (add != NULL) {
                     scatter_list = add_to_bottom(scatter_list, add);
                 }
@@ -1363,15 +1194,13 @@ scatter** find_endpoints(llist* detector_history, double energy_percent) {
  * distance between the two. That is: the distance between the center of the LOR
  * and the annihilation location perpendicular to the direction of the LOR
  */
-double first_scat_miss_transverse(lor* lor, vec3d* annh_loc) {
-	if ((lor == NULL) || (annh_loc == NULL)) {
+double first_scat_miss_transverse(lor* lor, vec3d annh_loc) {
+	if (lor == NULL) {
 		return -1;
 	}
-	vec3d* offset = vec_sub(annh_loc, lor->center);
-	vec3d* perpendicular = vec_cross(offset, lor->dir);
+	vec3d offset = vec_sub(annh_loc, lor->center);
+	vec3d perpendicular = vec_cross(offset, lor->dir);
 	double dist = vec_mag(perpendicular);
-	free(offset);
-	free(perpendicular);
 	return dist;
 }
 
@@ -1381,17 +1210,16 @@ double first_scat_miss_transverse(lor* lor, vec3d* annh_loc) {
  * center of the LOR and the annihilation projected onto the direction of the
  * LOR.
  */
-double first_scat_miss_longitudinal(lor* lor, vec3d* annh_loc) {
-	if ((lor == NULL) || (annh_loc == NULL)) {
+double first_scat_miss_longitudinal(lor* lor, vec3d annh_loc) {
+	if (lor == NULL) {
 		return -1;
 	}
-	vec3d* offset = vec_sub(annh_loc, lor->center);
+	vec3d offset = vec_sub(annh_loc, lor->center);
 	double offset_dist = vec_mag(offset);
 	if (offset_dist < ENG_RNG) {
 		return offset_dist;
 	}
 	double dist = vec_dot(offset, lor->dir);
-	free(offset);
 	return dist;
 }
 
@@ -1434,12 +1262,12 @@ lor* create_lor(scatter* a, scatter* b) {
 	if ((a == NULL) || (b == NULL)) {
 		return NULL;
 	}
-	vec3d* center_subtraction = vec_sub(a->loc, b->loc);
-	vec3d* center_half = vec_scaler(center_subtraction, 0.5);
-	vec3d* geometric_center = vec_add(b->loc, center_half);
-	vec3d* ba_unit = vec_norm(center_half);
+	vec3d center_subtraction = vec_sub(a->loc, b->loc);
+	vec3d center_half = vec_scaler(center_subtraction, 0.5);
+	vec3d geometric_center = vec_add(b->loc, center_half);
+	vec3d ba_unit = vec_norm(center_half);
 	double time_delta = 0.5 * (b->time - a->time);
-	vec3d* displacement = vec_scaler(ba_unit, SPD_LGHT * time_delta);
+	vec3d displacement = vec_scaler(ba_unit, SPD_LGHT * time_delta);
 	lor* new = (lor*)malloc(sizeof(lor));
 	new->center = vec_add(geometric_center, displacement);
 	new->dir = ba_unit;
@@ -1454,16 +1282,13 @@ lor* create_lor(scatter* a, scatter* b) {
 
 	new->transverse_uncert = (a_space + b_space) / 2;
 	new->long_uncert = sqrt(a->time_uncert * a->time_uncert + b->time_uncert * b->time_uncert) + (a_space + b_space) / 2;
-	free(center_subtraction);
-	free(center_half);
-	free(geometric_center);
-	free(displacement);
+
 	return new;
 }
 
 void print_lor(FILE* output, lor* lor) {
-	fprintf(output, "%f, %f, %f,", lor->center->x, lor->center->y, lor->center->z);
-	fprintf(output,  " %f, %f, %f,", lor->dir->x, lor->dir->y, lor->dir->z);
+	fprintf(output, "%f, %f, %f,", lor->center.x, lor->center.y, lor->center.z);
+	fprintf(output,  " %f, %f, %f,", lor->dir.x, lor->dir.y, lor->dir.z);
 	fprintf(output, " %f, %f", lor->long_uncert, lor->transverse_uncert);
 }
 
