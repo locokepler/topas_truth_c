@@ -20,7 +20,17 @@ llist* add_to_top(llist* list, void* data) {
 	new_top->down = list;
 	new_top->data = data;
 	list->up = new_top;
-	return list;
+	return new_top;
+}
+
+void* rec_get_val(llist* list, unsigned int id) {
+	if (list == NULL) {
+		return NULL;
+	}
+	if (id == 0) {
+		return list->data;
+	}
+	return rec_get_val(list->down, id - 1);
 }
 
 // returns the value of a given list component
@@ -36,7 +46,7 @@ void* get_value(llist* list, unsigned int id) {
 	if (id == 0) {
 		return list->data;
 	}
-	return get_value(list->down, id--);
+	return rec_get_val(list->down, id - 1);
 }
 
 // adds a piece of data to the end of a list
