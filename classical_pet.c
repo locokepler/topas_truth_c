@@ -543,33 +543,33 @@ int in_patient(llist* list) {
 	return rec_in_paitent(list, -1);
 }
 
-/*
- * find_annihilation_point
- * Takes a history and finds where the annihilation occured. If no
- * annihilation occured it returns NULL. If one did occur it returns an
- * array of doubles of length 3. This has the x,y,z position of the final
- * location of the positron
- * If it does not find an annihilation point it returns NULL
- */
-vec3d* find_annihilation_point(llist *history) {
-	if (history == NULL) {
-		return NULL;
-	}
-	history = list_head(history);
-	// looks for the first event that refers to a positron
-	while (((event*)(history->data))->particle != -11) {
-		history = history->down;
-		if (history == NULL) {
-			return NULL;
-		}
-	}
-	// now look for the last event that refers to a positron
-	while ((history->down != NULL) && (((event*)(history->down->data))->particle == -11)) {
-		history = history->down;
-	}
-	// now at the last event, return the location as a 3-vector
-	return vec_copy(((event*)(history->data))->location);
-}
+// /*
+//  * find_annihilation_point
+//  * Takes a history and finds where the annihilation occured. If no
+//  * annihilation occured it returns NULL. If one did occur it returns an
+//  * array of doubles of length 3. This has the x,y,z position of the final
+//  * location of the positron
+//  * If it does not find an annihilation point it returns NULL
+//  */
+// vec3d* find_annihilation_point(llist *history) {
+// 	if (history == NULL) {
+// 		return NULL;
+// 	}
+// 	history = list_head(history);
+// 	// looks for the first event that refers to a positron
+// 	while (((event*)(history->data))->particle != -11) {
+// 		history = history->down;
+// 		if (history == NULL) {
+// 			return NULL;
+// 		}
+// 	}
+// 	// now look for the last event that refers to a positron
+// 	while ((history->down != NULL) && (((event*)(history->down->data))->particle == -11)) {
+// 		history = history->down;
+// 	}
+// 	// now at the last event, return the location as a 3-vector
+// 	return vec_copy(((event*)(history->data))->location);
+// }
 
 /*
  * line_to_dot_dist:
