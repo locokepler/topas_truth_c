@@ -84,5 +84,24 @@ void print_geometry(FILE* output, geometry* a);
  */
 traversal* exit_rectangular_prism(ray* path, shape* prism, int* full_crossing);
 
+/* 
+ * Finds the distance to exiting a cylinder from the current ray. If the ray
+ * starts outside and goes through it returns the distance traveled inside and
+ * sets the full crossing flag to true. Works by checking for intersections with
+ * the two flat ends, then looking for ones along the cylinder. The cylinder
+ * check reuses the code for the sphere, just projected onto the xy plane.
+ */
+traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing);
+
+/*
+ * finds the distance to exiting the sphere for the given ray. If the ray
+ * starts outside the sphere and travels through, the distance is given as the
+ * travel inside of the sphere and full_crossing is set to true. Works using
+ * a line crossing sphere formula on wikipedia
+ * 
+ * Assumes that the ray is a unit vector
+ */
+traversal* exit_sphere(ray* path, shape* sphere, int* full_crossing);
+
 
 #endif
