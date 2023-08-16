@@ -559,7 +559,7 @@ traversal* exit_cyl(ray* path, shape* cyl, int* full_crossing) {
                 full_crossing[0] = 1;
             }
             traversal_free(plane_intersect); // should never run, but just in case
-            double dist = abs(flat_cyl[0] - flat_cyl[1]);
+            double dist = fabs(flat_cyl[0] - flat_cyl[1]);
             if (flat_cyl[0] > flat_cyl[1]) {
                 free(flat_cyl);
                 traversal* out = traversal_build(ends[0], dist);
