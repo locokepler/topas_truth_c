@@ -1008,15 +1008,17 @@ scatter** build_array_no_i(scatter** source, uint source_len, uint i) {
  * closest_gamma:
  * finds the id of the closest gamma to the given location. The gamma is sourced
  * from a given history. The gamma is required to be from an annihilation
- * If the search fails returns zero
+ * If the search fails returns zero. We will only check for gammas labeled 2 and 3
+ * This will hurt the search sometimes but will cutout wierd PE things
  */
-int closest_gamma(llist* history, vec3d target) {
+int closest_gamma(llist* history, vec3d target, double* deposited) {
 	if (history == NULL) {
 		return 0;
 	}
 	history = list_head(history);
 	double distance = INFINITY;
 	int best_id = 0;
+	double deposit = 0;
 	event* working_event = NULL;
 	while (history != NULL) {
 		// first, define our working event
@@ -1024,13 +1026,17 @@ int closest_gamma(llist* history, vec3d target) {
 		if ((working_event->particle == 22)) {
 			// it is a gamma from an annihilation
 			double check_dist = vec_dist(target, working_event->location);
-			if (distance > check_dist) {
+			if ((distance > check_dist) && (working_event->id < 4)) {
 				distance = check_dist;
 				best_id = working_event->id;
+				deposit = working_event->deposited;
 			}
 		}
 		// move on to next event
 		history = history->down;
+	}
+	if (deposited != NULL) {
+		deposited[0] = deposit;
 	}
 	return best_id;
 }
@@ -1039,6 +1045,217 @@ int closest_gamma(llist* history, vec3d target) {
 // gamma is the first. Now we need to run this twice (once on each annihilation
 // gamma) to get the two ends. Then from that we have the two ends and can
 // run a modified version of first_scat_miss from the energy cut calculations
+
+
+/*
+ * build_scatters
+ * takes the list of interactions in the detector volume and makes a list of
+ * energy deposition locations that are the scatter locations. This is the
+ * current version of the "cluster finding" algorithm. It uses truth data to
+ * find the location of the deposit. It also uses the real energy quantity
+ * deposited at the location, not an estimate using the switchillator.
+ * It returns the head of a new list of the scatter locations.
+ */
+llist* build_scatters(llist* detector_history, int id, int* count_of_scatters) {
+	if (detector_history == NULL) {
+		return NULL;
+	}
+	// looks to find the first instance of each electron showing up. Using the
+	// location of that eele_dirith a scatter
+	// of a gamma with the same identifier as id. If all is good the location is
+	// added as a scatter with the electron's energy.
+
+	// now also determines the direction of the electron. This is returned as
+	// a simple vector pointing from the current place to the second location
+	// of the electron. If the electron does not produce a second location then
+	// the scatter is given a NULL value for the direction
+
+	// put us at the start of the list
+	detector_history = list_head(detector_history);
+	// make the place for the list of scatters
+	llist* scatter_list = NULL;
+	// we will now iterate over the history looking for electrons. For each
+	// electron we then find the associated gamma using closest_gamma. This is
+	// a gamma match using only position. In theory the distance should be zero,
+	// in pratice I don't trust Geant4 that much.
+	llist* checked_electrons = NULL;
+	llist* added_electrons = NULL;
+
+	while (detector_history != NULL) {
+		int electron_checked = 0;
+		// is it an electron, if not skip to next entry
+		if (((event*)detector_history->data)->particle == 11) {
+			// have we recorded this electron already?
+			if (checked_electrons != NULL) {
+				// list of checked electons is not empty
+				llist* check = list_head(checked_electrons);
+				while ((check != NULL) && (!electron_checked)) {
+					if (*((int*)check->data) == ((event*)detector_history->data)->id) {
+						// the current electron is in our list of handled electrons
+						electron_checked = 1;
+					}
+					check = check->down;
+				}
+			}
+			if ((added_electrons != NULL) && (!electron_checked)) {
+				llist* check = list_head(added_electrons);
+				while ((check != NULL) && (!electron_checked)) {
+					if (*((int*)check->data) == ((event*)detector_history->data)->id) {
+						// the current electron is in the list of added electrons
+						electron_checked = 1;
+					}
+					check = check->down;
+				}
+			}
+			// electron_checked now contains if we have previously looked at this
+			// electron
+			if (!electron_checked) {
+				//  so which gamma is it from?
+				double deposit;
+				int gamma_id = closest_gamma(detector_history, ((event*)detector_history->data)->location, &deposit);
+				if (gamma_id == id) {
+					// time to add this electron to the scatter list
+					if (count_of_scatters != NULL) {
+						count_of_scatters[0]++;
+					}
+					vec3d scatter_loc = (((event*)detector_history->data)->location);
+					event* cur_event = (event*)detector_history->data;
+
+					// now check for other electrons in the same area. Basically a simple clustering check
+					// If other electrons are within one spatial uncertainty combine the energy of them
+					// any electrons marked this way must also be added to the list of checked electrons
+					llist* close_history = list_head(detector_history);
+					int current_check_particle = 0;
+					while (close_history != NULL) {
+						event* current_check = close_history->data;
+						if ((current_check_particle != current_check->id) && (current_check->id != ((event*)detector_history->data)->id)) {
+							// we have not processed this particle in this while loop
+							current_check_particle = current_check->id;
+							if ((current_check->particle == 11) && (vec_mag(vec_sub(current_check->location, scatter_loc)) < 0.05)) {
+								// its close in space, check if we have added this electron to some total already
+								llist* combined = list_head(added_electrons);
+								int added = 0;
+								while ((added == 0) && (combined != NULL)) {
+									// check if we have the current particle listed as having been added
+									if (((int*)(combined->data))[0] == current_check_particle) {
+										// we've added this particles energy previously
+										added = 1;
+									}
+									combined = combined->down;
+								}
+								if (added == 0) {
+									// printf("found electron %i close, adding %lf keV\n", current_check_particle, current_check->energy);
+									deposit += current_check->energy;
+									int* electron_id = (int*)malloc(sizeof(int));
+									electron_id[0] = current_check_particle;
+									added_electrons = add_to_bottom(added_electrons, electron_id);
+								}
+							}
+						}
+						close_history = close_history->down;
+					}
+
+
+					char has_dir = 0; // we aren't doing anything with electrons so let's not pretend
+					scatter* add_scatter;
+					double photons = cur_event->energy * (double)P_PER_KEV;
+					add_scatter = new_scatter(scatter_loc, three_vec(0,0,0), has_dir, cur_event->energy + deposit, cur_event->tof, sqrt(photons) / ((double)P_PER_KEV), SPC_UNCERT_PLANE, 0);
+					scatter_truth* truth_info = (scatter_truth*)malloc(sizeof(scatter_truth));
+					truth_info->true_eng = cur_event->energy;
+					truth_info->true_time = cur_event->tof;
+					add_scatter->truth = truth_info;
+
+					// add random variation to the scatter location and time
+					double x_rand = 1.0 * (drand48() - 0.5);
+					double y_rand = 1.0 * (drand48() - 0.5);
+					double z_rand = 1.0 * (drand48() - 0.5);
+					double time_var = 0.0;
+					double eng_var = 0.0;
+					for (int i = 0; i < UNCERT_REP; i++) {
+						// creates a randomly distributed value
+						time_var += drand48();
+						eng_var += drand48();
+					}
+					// time_var -= ((float)(UNCERT_REP) * 0.5);
+					eng_var  -= ((float)(UNCERT_REP) * 0.5);
+					// distance and time now have their variation size
+
+					// assuming that the center of the bore is on the z axis
+					// the radial direction (taken as the z_rand value) is along that
+					// vector
+					vec3d radial = three_vec(scatter_loc.x, scatter_loc.y, 0);
+					vec3d radial_norm = vec_norm(radial);
+
+					radial = vec_scaler(radial_norm, z_rand * SPC_UNCERT_RAD);
+					// radial blurring calculated
+					vec3d bore = three_vec(0,0,1);
+					// direction of the bore
+					vec3d circumfrence = vec_cross(radial_norm, bore);
+					// direction around the circumfrence at the scatter location
+					vec3d circum_norm = vec_norm(circumfrence);
+					vec3d circum_rand = vec_scaler(circum_norm, y_rand * SPC_UNCERT_PLANE);
+					// blurring around the direction of the circumfrence
+					circum_rand.z += x_rand * SPC_UNCERT_PLANE;
+					// blurring along the direction of the bore
+					vec3d rand_space = vec_add(radial, circum_rand);
+					// combine all of the blurring
+					vec3d rand_loc = vec_add(scatter_loc, rand_space);
+					// add the blurring to the scatter location
+
+					add_scatter->loc = rand_loc;
+					// distance variation set
+					// SEE TIME VARIATION ON OR OFF
+					// if (run_time_rand) {
+					add_scatter->time += time_var;
+					// }
+					// done adding time randomness
+					// find the new energy (after blurring)
+					// printf("energy: %lf\nuncertainty: %lf\nvariation: %lf\n", add_scatter->deposit, add_scatter->eng_uncert, eng_var);
+					double new_eng = (eng_var * add_scatter->eng_uncert) + add_scatter->deposit;
+					// discretize the energy value to line up with the number of
+					add_scatter->deposit = new_eng;
+					// done adding energy randomness
+					// done adding random variation
+					if (add_scatter->deposit <= MIN_SCAT_ENG) {
+						// after energy randomness there can be negative energies
+						// if there is one delete the addition of this scatter
+						// and act as if no swichilator got flipped
+						delete_scatter(add_scatter); 
+					} else {
+						scatter_list = add_to_bottom(scatter_list, add_scatter);
+					}
+					int* electron_id = (int*)malloc(sizeof(int));
+					electron_id[0] = ((event*)detector_history->data)->id;
+					added_electrons = add_to_bottom(added_electrons, electron_id);
+				}
+				// add the electron to the list of electrons we have checked
+				int* electron_id = (int*)malloc(sizeof(int));
+				*electron_id = ((event*)detector_history->data)->id;
+				checked_electrons = add_to_bottom(checked_electrons, electron_id);
+			}
+		}
+		detector_history = detector_history->down;
+	}
+
+	fmap(checked_electrons, free_null);
+	delete_list(checked_electrons);
+	fmap(added_electrons, free_null);
+	delete_list(added_electrons);
+
+	// go through and add the real n value for each scatter
+	// the list will be in reverse order due to TOPAS/Geant4 call structure
+	int length = list_length(scatter_list);
+	llist* head = scatter_list;
+	for (int i = 0; i < length; i++) {
+		scatter_truth* true_info = ((scatter*)(head->data))->truth;
+		if (true_info != NULL) {
+			true_info->true_n = length - i;
+		}
+		head = head->down;
+	}
+
+	return scatter_list;
+}
 
 
 /* find the electron paths that were recorded. If there are any number of
@@ -1056,111 +1273,87 @@ scatter** find_endpoints(llist* detector_history, double energy_percent) {
         return NULL;
     }
     detector_history = list_head(detector_history);
-    llist* scatter_list = NULL;
-    llist* checked_electrons = NULL;
+	llist* search_history = detector_history;
+	int first_id = 0;
+	int second_id = 0;
 
-    while (detector_history != NULL) {
-        int electron_checked = 0;
-        // is it an electron?
-        if (((event*)detector_history->data)->particle == 11) {
-            // have we recorded this electron previously?
-            if (checked_electrons != NULL) {
-                // list of checked electrons is not empty, we have to iterate
-                llist* check = list_head(checked_electrons);
-                while ((check != NULL) && (!electron_checked)) {
-					if (*((int*)check->data) == ((event*)detector_history->data)->id) {
-						// the current electron is in our list of handled variables
-						electron_checked = 1;
-					}
-					check = check->down;
-                }
-            }
-			// electron_checked now contains if we have previously looked at this
-			// electron
-			if (!electron_checked) {
-                // ok add it as a scatter
-                event* cur_event = (event*)detector_history->data;
-                vec3d scatter_loc = cur_event->location;
-                scatter* add = NULL;
+	while (search_history != NULL) {
+		// find the lowest two ID gammas (they will be from the annihilation)
+		event* current_event = (event*)search_history->data;
+		if ((current_event->particle == 22) && (current_event->id != first_id) && (current_event->id != second_id)) {
+			// we have a gamma, and it isn't the same as the (possibly alreadly found)
+			// first gamma
+			if (first_id == 0) {
+				first_id = current_event->id;
+			} else {
+				if ((current_event->id < second_id) || (second_id == 0)) {
+					second_id = current_event->id;
+				}
+			}
+		}
+		search_history = search_history->down;
+	}
+	if (second_id == 0) {
+		// no second gamma was found, so no line of response can be made.
+		return NULL;
+	}
+	// printf("gamma id 1: %i\tgamma id 2: %i\n", first_id, second_id);
 
-                // determine random variation
-                double x_rand = 1.0 * (drand48() - 0.5);
-                double y_rand = 1.0 * (drand48() - 0.5);
-                double z_rand = 1.0 * (drand48() - 0.5);
-                double time_rand = 0.0;
-                double eng_rand = 0.0;
-                for (int i = 0; i < UNCERT_REP; i++) {
-                    time_rand += drand48();
-                    eng_rand += drand48();
-                }
-                time_rand -= (float)UNCERT_REP / 2.0;
-                eng_rand -= (float)UNCERT_REP / 2.0;
-                // assuming that the center of the bore is on the z axis
-                // the radial direction (taken as the z_rand value) is along that
-                // vector
-                vec3d radial = three_vec(scatter_loc.x, scatter_loc.y, 0);
-                vec3d radial_norm = vec_norm(radial);
+	llist* scat_list1 = build_scatters(detector_history, first_id, NULL);
+	llist* scat_list2 = build_scatters(detector_history, second_id, NULL);
+	if ((scat_list1 == NULL) || (scat_list2 == NULL)) {
+		if (scat_list1 == NULL) {
+			fmap(scat_list2, delete_scatter);
+			delete_list(scat_list2);
+		} else {
+			fmap(scat_list1, delete_scatter);
+			delete_list(scat_list1);
+		}
+		return NULL;
+	}
 
-                radial = vec_scaler(radial_norm, z_rand * SPC_UNCERT_RAD);
-                // radial blurring calculated
-                vec3d bore = three_vec(0,0,1);
-                // direction of the bore
-                vec3d circumfrence = vec_cross(radial_norm, bore);
-                // direction around the circumfrence at the scatter location
-                vec3d circum_norm = vec_norm(circumfrence);
-                vec3d circum_rand = vec_scaler(circum_norm, y_rand * SPC_UNCERT_PLANE);
-                // blurring around the direction of the circumfrence
-                circum_rand.z += x_rand * SPC_UNCERT_PLANE;
-                // blurring along the direction of the bore
-                vec3d rand_space = vec_add(radial, circum_rand);
-                // combine all of the blurring
-                vec3d rand_loc = vec_add(scatter_loc, rand_space);
-                // add the blurring to the scatter location
+    // we now have a list of scatter locations. Check if there is a scatter that passes the energy cut for the first one
+	scatter* first_endpoint = NULL;
+	llist* current_location = list_head(scat_list1);
+	while ((current_location != NULL) && (first_endpoint == NULL)) {
+		// printf("first scatter list energy error: %lf\n", fabs(((scatter*)(current_location->data))->deposit - ELECTRON_MASS) / ELECTRON_MASS);
+		// printf("first scatter list energy: %lf\n", ((scatter*)(current_location->data))->deposit);
+		if (fabs(((scatter*)(current_location->data))->deposit - ELECTRON_MASS) / ELECTRON_MASS < energy_percent) {
+			first_endpoint = (scatter*)(current_location->data);
+		} else {
+			current_location = current_location->down;
+		}
+	}
+	scatter* second_endpoint = NULL;
+	current_location = list_head(scat_list2);
+	while ((current_location != NULL) && (second_endpoint == NULL)) {
+		// printf("second scatter list energy error: %lf\n", fabs(((scatter*)(current_location->data))->deposit - ELECTRON_MASS) / ELECTRON_MASS);
+		// printf("second scatter list energy: %lf\n", ((scatter*)(current_location->data))->deposit);
+		if (fabs(((scatter*)(current_location->data))->deposit - ELECTRON_MASS) / ELECTRON_MASS < energy_percent) {
+			second_endpoint = (scatter*)(current_location->data);
+		} else {
+			current_location = current_location->down;
+		}
+	}
+	if ((first_endpoint != NULL) && (second_endpoint != NULL)) {
+		
+		scatter** return_vals = (scatter**)malloc(2 * sizeof(scatter*));
+		return_vals[0] = copy_scatter(first_endpoint);;
+		return_vals[1] = copy_scatter(second_endpoint);
 
-                // add time randomness
-                time_rand *= TIME_UNCERT_CM / SPD_LGHT;
-                double photons = cur_event->energy * (double)P_PER_KEV;
-                double eng_uncert = sqrt(photons) / ((double)P_PER_KEV);
-                eng_rand *= eng_uncert;
+		fmap(scat_list1, delete_scatter);
+		fmap(scat_list2, delete_scatter);
+		delete_list(scat_list1);
+		delete_list(scat_list2);
+
+		return return_vals;
+	}
 
 
-                add = new_scatter(rand_loc, three_vec(NAN,NAN,NAN), 0, cur_event->energy + eng_rand, cur_event->tof + time_rand, eng_uncert, SPC_UNCERT_PLANE/2.0, TIME_UNCERT_CM);
-                if (add != NULL) {
-                    scatter_list = add_to_bottom(scatter_list, add);
-                }
-				// add the electron to the list of electrons we have checked
-				int* electron_id = (int*)malloc(sizeof(int));
-				*electron_id = ((event*)detector_history->data)->id;
-				checked_electrons = add_to_bottom(checked_electrons, electron_id);
-            }
-        }
-        detector_history = detector_history->down;
-    }
-    fmap(checked_electrons, free_null);
-    delete_list(checked_electrons);
-    if (scatter_list == NULL) {
-        return NULL;
-    }
-
-    // we now have a list of scatter locations. First check there are exactly 2
-    if (list_length(scatter_list) == 2) {
-        if ((fabs(((scatter*)(scatter_list->data))->deposit - ELECTRON_MASS) / ELECTRON_MASS < energy_percent)
-            && (fabs(((scatter*)(scatter_list->down->data))->deposit - ELECTRON_MASS) / ELECTRON_MASS < energy_percent)) {
-            // both tracks are within the acceptable energy range
-            // the two are the endpoints we care about
-            scatter* first_endpoint = copy_scatter((scatter*)(scatter_list->data));
-            scatter* second_endpoint = copy_scatter((scatter*)(scatter_list->down->data));
-            fmap(scatter_list, delete_scatter);
-            delete_list(scatter_list);
-
-            scatter** return_vals = (scatter**)malloc(2 * sizeof(scatter*));
-            return_vals[0] = first_endpoint;
-            return_vals[1] = second_endpoint;
-            return return_vals;
-        }
-    }
-    fmap(scatter_list, delete_scatter);
-    delete_list(scatter_list);
+    fmap(scat_list1, delete_scatter);
+    fmap(scat_list2, delete_scatter);
+    delete_list(scat_list1);
+    delete_list(scat_list2);
     return NULL;
 }
 
