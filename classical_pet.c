@@ -1079,7 +1079,6 @@ llist* build_scatters(llist* detector_history, int id, int* count_of_scatters) {
 	// a gamma match using only position. In theory the distance should be zero,
 	// in pratice I don't trust Geant4 that much.
 	llist* checked_electrons = NULL;
-	llist* added_electrons = NULL;
 
 	while (detector_history != NULL) {
 		int electron_checked = 0;
@@ -1092,16 +1091,6 @@ llist* build_scatters(llist* detector_history, int id, int* count_of_scatters) {
 				while ((check != NULL) && (!electron_checked)) {
 					if (*((int*)check->data) == ((event*)detector_history->data)->id) {
 						// the current electron is in our list of handled electrons
-						electron_checked = 1;
-					}
-					check = check->down;
-				}
-			}
-			if ((added_electrons != NULL) && (!electron_checked)) {
-				llist* check = list_head(added_electrons);
-				while ((check != NULL) && (!electron_checked)) {
-					if (*((int*)check->data) == ((event*)detector_history->data)->id) {
-						// the current electron is in the list of added electrons
 						electron_checked = 1;
 					}
 					check = check->down;
@@ -1121,101 +1110,15 @@ llist* build_scatters(llist* detector_history, int id, int* count_of_scatters) {
 					vec3d scatter_loc = (((event*)detector_history->data)->location);
 					event* cur_event = (event*)detector_history->data;
 
-					// now check for other electrons in the same area. Basically a simple clustering check
-					// If other electrons are within one spatial uncertainty combine the energy of them
-					// any electrons marked this way must also be added to the list of checked electrons
-					llist* close_history = list_head(detector_history);
-					int current_check_particle = 0;
-					while (close_history != NULL) {
-						event* current_check = close_history->data;
-						if ((current_check_particle != current_check->id) && (current_check->id != ((event*)detector_history->data)->id)) {
-							// we have not processed this particle in this while loop
-							current_check_particle = current_check->id;
-							if ((current_check->particle == 11) && (vec_mag(vec_sub(current_check->location, scatter_loc)) < 0.05)) {
-								// its close in space, check if we have added this electron to some total already
-								llist* combined = list_head(added_electrons);
-								int added = 0;
-								while ((added == 0) && (combined != NULL)) {
-									// check if we have the current particle listed as having been added
-									if (((int*)(combined->data))[0] == current_check_particle) {
-										// we've added this particles energy previously
-										added = 1;
-									}
-									combined = combined->down;
-								}
-								if (added == 0) {
-									// printf("found electron %i close, adding %lf keV\n", current_check_particle, current_check->energy);
-									deposit += current_check->energy;
-									int* electron_id = (int*)malloc(sizeof(int));
-									electron_id[0] = current_check_particle;
-									added_electrons = add_to_bottom(added_electrons, electron_id);
-								}
-							}
-						}
-						close_history = close_history->down;
-					}
-
-
 					char has_dir = 0; // we aren't doing anything with electrons so let's not pretend
 					scatter* add_scatter;
 					double photons = cur_event->energy * (double)P_PER_KEV;
-					add_scatter = new_scatter(scatter_loc, three_vec(0,0,0), has_dir, cur_event->energy + deposit, cur_event->tof, sqrt(photons) / ((double)P_PER_KEV), SPC_UNCERT_PLANE, 0);
+					add_scatter = new_scatter(scatter_loc, three_vec(0,0,0), has_dir, cur_event->energy + deposit, cur_event->tof, sqrt(photons) / ((double)P_PER_KEV), SPC_UNCERT_PLANE, TIME_UNCERT_CM);
 					scatter_truth* truth_info = (scatter_truth*)malloc(sizeof(scatter_truth));
 					truth_info->true_eng = cur_event->energy;
 					truth_info->true_time = cur_event->tof;
 					add_scatter->truth = truth_info;
 
-					// add random variation to the scatter location and time
-					double x_rand = 1.0 * (drand48() - 0.5);
-					double y_rand = 1.0 * (drand48() - 0.5);
-					double z_rand = 1.0 * (drand48() - 0.5);
-					double time_var = 0.0;
-					double eng_var = 0.0;
-					for (int i = 0; i < UNCERT_REP; i++) {
-						// creates a randomly distributed value
-						time_var += drand48();
-						eng_var += drand48();
-					}
-					// time_var -= ((float)(UNCERT_REP) * 0.5);
-					eng_var  -= ((float)(UNCERT_REP) * 0.5);
-					// distance and time now have their variation size
-
-					// assuming that the center of the bore is on the z axis
-					// the radial direction (taken as the z_rand value) is along that
-					// vector
-					vec3d radial = three_vec(scatter_loc.x, scatter_loc.y, 0);
-					vec3d radial_norm = vec_norm(radial);
-
-					radial = vec_scaler(radial_norm, z_rand * SPC_UNCERT_RAD);
-					// radial blurring calculated
-					vec3d bore = three_vec(0,0,1);
-					// direction of the bore
-					vec3d circumfrence = vec_cross(radial_norm, bore);
-					// direction around the circumfrence at the scatter location
-					vec3d circum_norm = vec_norm(circumfrence);
-					vec3d circum_rand = vec_scaler(circum_norm, y_rand * SPC_UNCERT_PLANE);
-					// blurring around the direction of the circumfrence
-					circum_rand.z += x_rand * SPC_UNCERT_PLANE;
-					// blurring along the direction of the bore
-					vec3d rand_space = vec_add(radial, circum_rand);
-					// combine all of the blurring
-					vec3d rand_loc = vec_add(scatter_loc, rand_space);
-					// add the blurring to the scatter location
-
-					add_scatter->loc = rand_loc;
-					// distance variation set
-					// SEE TIME VARIATION ON OR OFF
-					// if (run_time_rand) {
-					add_scatter->time += time_var;
-					// }
-					// done adding time randomness
-					// find the new energy (after blurring)
-					// printf("energy: %lf\nuncertainty: %lf\nvariation: %lf\n", add_scatter->deposit, add_scatter->eng_uncert, eng_var);
-					double new_eng = (eng_var * add_scatter->eng_uncert) + add_scatter->deposit;
-					// discretize the energy value to line up with the number of
-					add_scatter->deposit = new_eng;
-					// done adding energy randomness
-					// done adding random variation
 					if (add_scatter->deposit <= MIN_SCAT_ENG) {
 						// after energy randomness there can be negative energies
 						// if there is one delete the addition of this scatter
@@ -1224,9 +1127,6 @@ llist* build_scatters(llist* detector_history, int id, int* count_of_scatters) {
 					} else {
 						scatter_list = add_to_bottom(scatter_list, add_scatter);
 					}
-					int* electron_id = (int*)malloc(sizeof(int));
-					electron_id[0] = ((event*)detector_history->data)->id;
-					added_electrons = add_to_bottom(added_electrons, electron_id);
 				}
 				// add the electron to the list of electrons we have checked
 				int* electron_id = (int*)malloc(sizeof(int));
@@ -1239,8 +1139,6 @@ llist* build_scatters(llist* detector_history, int id, int* count_of_scatters) {
 
 	fmap(checked_electrons, free_null);
 	delete_list(checked_electrons);
-	fmap(added_electrons, free_null);
-	delete_list(added_electrons);
 
 	// go through and add the real n value for each scatter
 	// the list will be in reverse order due to TOPAS/Geant4 call structure
@@ -1252,6 +1150,110 @@ llist* build_scatters(llist* detector_history, int id, int* count_of_scatters) {
 			true_info->true_n = length - i;
 		}
 		head = head->down;
+	}
+
+	// time to consoidate the various scatters. The following consolidation is done in O(nlog(n))
+	// Start with an entry in the scatter list. Check if there are any other scatters in the list
+	// within a spatial uncertainty of the current location. If there are add the energy of the
+	// other found scatters to the original, and make the position the weighted average position.
+	// After combining the scatters, remove all but the parent scatter.
+	scatter_list = list_head(scatter_list);
+	for (llist* uncombined_scatter_list = scatter_list; uncombined_scatter_list != NULL; uncombined_scatter_list = uncombined_scatter_list->down) {
+		scatter* working_scatter = (scatter*)(uncombined_scatter_list->data);
+
+		llist* search_scatter_list = uncombined_scatter_list->down;
+		while (search_scatter_list != NULL) {
+			// check how close the two scatters are
+			scatter* check_scatter = ((scatter*)(search_scatter_list->data));
+			vec3d separation = vec_sub(check_scatter->loc, working_scatter->loc);
+			if (vec_mag(separation) < 0.5 * SPC_UNCERT_PLANE) {
+				// ok they were close, combine the scatters
+				// choose the earliest time that could have been seen
+				working_scatter->time = (working_scatter->time < check_scatter->time) ? working_scatter->time : check_scatter->time;
+				// weighted average of the position. 
+				double weight = check_scatter->deposit / (check_scatter->deposit + working_scatter->deposit);
+				// weight gives how much to move along the vector from working_scatter towards check_scatter
+				vec3d new_loc = vec_add(working_scatter->loc, vec_scaler(separation, weight));
+				working_scatter->loc = new_loc;
+				// now combine the energies
+				working_scatter->deposit += check_scatter->deposit;
+
+				// finally remove the excess scatter
+				delete_scatter(check_scatter);
+				llist* entry_for_removal = search_scatter_list;
+				search_scatter_list = search_scatter_list->up;
+				search_scatter_list->down = entry_for_removal->down;
+				if (entry_for_removal->down != NULL) {
+					entry_for_removal->down->up = entry_for_removal->up;
+				}
+				free(entry_for_removal);
+			}
+			// continue the search
+			search_scatter_list = search_scatter_list->down;
+		}
+
+	}
+
+	// now that the scatter list is consolidated, apply uncertainties to the whole shebang:
+
+	llist* unrandomized_scatters = scatter_list;
+	while (unrandomized_scatters != NULL) {
+		scatter* working_scatter = (scatter*)(unrandomized_scatters->data);
+		// add random variation to the scatter location and time
+		double x_rand = 1.0 * (drand48() - 0.5);
+		double y_rand = 1.0 * (drand48() - 0.5);
+		double z_rand = 1.0 * (drand48() - 0.5);
+		double time_var = 0.0;
+		double eng_var = 0.0;
+		for (int i = 0; i < UNCERT_REP; i++) {
+			// creates a randomly distributed value
+			time_var += drand48();
+			eng_var += drand48();
+		}
+		time_var -= ((float)(UNCERT_REP) * 0.5);
+		eng_var  -= ((float)(UNCERT_REP) * 0.5);
+		// distance and time now have their variation size
+
+		// assuming that the center of the bore is on the z axis
+		// the radial direction (taken as the z_rand value) is along that
+		// vector
+		vec3d radial = three_vec(working_scatter->loc.x, working_scatter->loc.y, 0);
+		vec3d radial_norm = vec_norm(radial);
+
+		radial = vec_scaler(radial_norm, z_rand * SPC_UNCERT_RAD);
+		// radial blurring calculated
+		vec3d bore = three_vec(0,0,1);
+		// direction of the bore
+		vec3d circumfrence = vec_cross(radial_norm, bore);
+		// direction around the circumfrence at the scatter location
+		vec3d circum_norm = vec_norm(circumfrence);
+		vec3d circum_rand = vec_scaler(circum_norm, y_rand * SPC_UNCERT_PLANE);
+		// blurring around the direction of the circumfrence
+		circum_rand.z += x_rand * SPC_UNCERT_PLANE;
+		// blurring along the direction of the bore
+		vec3d rand_space = vec_add(radial, circum_rand);
+		// combine all of the blurring
+		vec3d rand_loc = vec_add(working_scatter->loc, rand_space);
+		// add the blurring to the scatter location
+
+		working_scatter->loc = rand_loc;
+		// distance variation set
+		// SEE TIME VARIATION ON OR OFF
+		// if (run_time_rand) {
+		double time_adjust = time_var * (TIME_UNCERT_CM / SPD_LGHT);
+		// printf("time randomness (ns) %lf\n", time_adjust);
+		working_scatter->time += time_adjust;
+		// }
+		// done adding time randomness
+		// find the new energy (after blurring)
+		// printf("energy: %lf\nuncertainty: %lf\nvariation: %lf\n", add_scatter->deposit, add_scatter->eng_uncert, eng_var);
+		double new_eng = (eng_var * (sqrt(working_scatter->deposit * P_PER_KEV) / P_PER_KEV)) + working_scatter->deposit;
+		// printf("original energy = %lf, \tnew energy = %lf\n", working_scatter->deposit, new_eng);
+		// discretize the energy value to line up with the number of
+		working_scatter->deposit = new_eng;
+		// done adding energy randomness
+		// done adding random variation
+		unrandomized_scatters = unrandomized_scatters->down;
 	}
 
 	return scatter_list;
