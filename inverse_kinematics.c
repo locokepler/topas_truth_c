@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include "vector_ops.h"
 #include "lor.h"
+#include "ray_trace.h"
 
 #define ENG_RNG 0.001
 #define COMP_INT 1667457891
@@ -16,18 +17,21 @@
 #define LARGEST 10 // max scatters in a tree
 #define SKIP 0 // number of scatters to skip at end of tree
 #define KEEP_SINGLES 1
-#define MAX_SINGLE_SIGMA 3.0 // max sigma for a scatter to be accepted as possible
-#define MIN_SCAT_ENG 10.0 // minumum energy for a scatter to be observed
-#define E_TRIGGER 20.0 // energy in keV to hit trigger 
+#define MAX_SINGLE_FOM 3.0 // max sigma for a scatter to be accepted as possible
+#define MIN_SCAT_ENG 0.0 //10.0 // minumum energy for a scatter to be observed
+#define E_TRIGGER 0.0 //20.0 // energy in keV to hit trigger 
 #define PHI_MODULES 12 // modules for trigger
 #define MODULE_SEPERATION 3 // min number of modules separation for trigger
 #define NEVER_CUT 0
+#define BINDING_WIDTH 0.5 // a 1 sigma width in keV for the effects of electron binding energy and doppler
+#define USE_SCATTER_DISTANCE 1 // flag on if to use the distance between scatters as part of FOM
+#define BORE_RADIUS 45 // measured in cm
 
 double time_uncert_cm = 6.36; // in cm for one sigma, NOT ps or ns FWHM
 double spc_uncert = 0.1; // cm
-#define UNCERT_REP 12
-double E_per_switch = 1.0; // keV/switch
+double P_per_keV = 1.0; // keV/switch
 int run_time_rand = 1;
+#define UNCERT_REP 12
 
 #define READ_DEBUG 0
 #define GENERAL_DEBUG 0
@@ -64,6 +68,10 @@ float first_FOM = -1;
 float second_FOM = -1;
 int used_scatters_1 = -1;
 int used_scatters_2 = -1;
+
+float bore_position[3] = {0,0,0};
+float bore_dimentions[3] = {45, 200, 0};
+shape* detector_bore = NULL;
 
   
 // reads a line from the source file as an event
@@ -506,6 +514,20 @@ int test_factorial() {
 	return 1;
 }
 
+// as copied from stack overflow
+float myErfInv2(float x){
+   float tt1, tt2, lnx, sgn;
+   sgn = (x < 0) ? -1.0f : 1.0f;
+
+   x = (1 - x)*(1 + x);        // x = 1 - x*x;
+   lnx = logf(x);
+
+   tt1 = 2/(PI*0.147) + 0.5f * lnx;
+   tt2 = 1/(0.147) * lnx;
+
+   return(sgn*sqrtf(-tt1 + sqrtf(tt1*tt1 - tt2)));
+}
+
 /* 
  * Checks to see if the current event was a gamma event (scattering)
  * closer to the center than the given distance. If it was it returns
@@ -772,6 +794,8 @@ double expected_uncert_b(double b, double theta, double uncert_b, double uncert_
 	// now to calculate the uncertanty
 	if (uncert != NULL) {
 		double delta_e = expected_uncert_b(b->deposit, theta, b->eng_uncert, theta_uncert);
+		// add in a binding energy uncertainty:
+		delta_e = add_quadrature(delta_e, BINDING_WIDTH);
 		if (delta_e < 0) {
 			fprintf(stderr, "expected_energy_b: uncertanty negative: %lf\n",delta_e);
 		}
@@ -849,6 +873,54 @@ int test_expected_energy() {
 	}
 	printf("test_expected_energy: FAILED ONE OR MORE TESTS\n");
 	return 0;
+}
+
+/*
+ * dist_probability:
+ * Takes a pair of scatters from a detector and the predicted energy of the gamma
+ * that went from one to the other. It then calculates the distance between the
+ * scatters and using an approximation of the cross-section values for 
+ */
+double dist_sigma(scatter* a, scatter* b, double energy) {
+	if ((a == NULL) || (b == NULL)) {
+		return -INFINITY; // very bad, and noticably meaningless result (it's negative)
+	}
+	// To handle a gamma that passes back through the bore of the detector, subtract the distance
+	// traveled through a cylinder with the inner radius of the detector.
+	// To determine the distance travled within the detector medium calculate the distance between
+	// the two scatters and then subtract the distance that ray travels inside the radius of the bore
+	vec3d outgoing = vec_sub(b->loc, a->loc);
+	double total_distance = vec_mag(outgoing);
+	double crossing_distance = total_distance;
+	// make a ray from loc to remaining
+	// check the direction that the ray would have. If it is not inward we do not need to raytrace
+	// dot the vector pointing from the center with the direction vector
+	if (vec_dot(three_vec(outgoing.x, outgoing.y, 0), three_vec(a->loc.x, a->loc.y, 0)) < 0.0) {
+		vec3d outgoing_unit = vec_scaler(outgoing, 1.0/total_distance);
+		ray* outgoing_ray = ray_build(a->loc, outgoing_unit);
+		traversal* bore_distance = exit_cyl(outgoing_ray, detector_bore, NULL);
+		if (bore_distance != NULL) {
+			crossing_distance += bore_distance->t;
+			traversal_free(bore_distance);
+		}
+		ray_free(outgoing_ray);
+	}
+	// whats the probability this happened?
+	// requires the interaction cross section of the material at various energies
+	double cross_sections[10] = {0.166, 0.142, 0.128, 0.118, 0.109, 0.102, 0.096, 0.092, 0.088, 0.083};
+	double energy_cross_section;
+	if (energy < 50.0) {
+		energy_cross_section = cross_sections[0];
+	} else if (energy > 500.0) {
+		energy_cross_section = cross_sections[9];
+	} else {
+		energy_cross_section = cross_sections[(int)round(energy / 50.0) - 1];
+	}
+	double probability = exp(-fabs(crossing_distance) * energy_cross_section); // distance / (1/e distance)
+	// printf("distance: %lf,\t cross section: %lf, \t exponent = %lf\n",crossing_distance, energy_cross_section, -fabs(crossing_distance) * energy_cross_section);
+	double sigma = myErfInv2(1.0 - probability);
+	// printf("Prob: %lf, \t sigma %lf\n", probability, sigma);
+	return sigma;
 }
 
 /* 
@@ -1306,6 +1378,12 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 		double new_eng_uncert = add_quadrature(inc_uncert, loc->eng_uncert);
 		// the a->b gamma prediction and the value from earlier in the chain
 		double step_error = energy_error;
+		if ((step_error + current < best) && (step_error < MAX_SINGLE_FOM) && USE_SCATTER_DISTANCE) {
+			// no sense in checking other constraints if we already fail
+			// find the error based on the distance traveled between the two interaction locations
+			double dist_error = dist_sigma(loc, remaining[i], prediction);
+			step_error = add_quadrature(step_error, dist_error);
+		}
 
 		// now find the error in electron direction plane
 		if (loc->has_dir) {
@@ -1341,7 +1419,7 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 		}
 
 
-		if ((combined_error < best) && (step_error < MAX_SINGLE_SIGMA)) {
+		if ((combined_error < best) && (step_error < MAX_SINGLE_FOM)) {
 			// time to go one layer further
 			scatter** new_array = build_array_no_i(remaining, remain_count, i);
 			// continuing_path = NULL;
@@ -1418,8 +1496,6 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 
 	int len_hist_near = list_length(history_near);
 	int len_hist_far = list_length(history_far);
-
-	double best_find = sigma_per_scatter * (len_hist_near - SKIP);
 
 	if (len_hist_near < 2) {
 		// history1 is too short to run the recursion process.
@@ -1515,6 +1591,8 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 	if (len_hist_far > LARGEST + SKIP) {
 		len_hist_far = LARGEST + SKIP;
 	}
+
+	double best_find = sigma_per_scatter * (len_hist_near - SKIP);
 
 	if (SCATTER_LIST_DEBUG) {
 		fprintf(debug_scatter_lists, "First gamma scatters:\n");
@@ -1790,7 +1868,7 @@ scatter** double_tree_stat_iteration(llist* history_1, llist* history_2, double 
 
 			double try_2 = INFINITY;
 			llist* path_2 = NULL;
-			if (try_1 < best_combination) {
+			if ((try_1 < best_combination) && (try_1 < best_find_1)) {
 
 				if (GRAPHVIZ_DEBUG) {
 					fprintf(debug_graphs, "\n\ndigraph %u%i%i {\n", hist_num, j, i);
@@ -1996,11 +2074,11 @@ llist* build_scatters(llist* detector_history, int id, int* count_of_scatters) {
 					}
 					scatter* add_scatter;
 					if (!has_dir) {
-						add_scatter = new_scatter(scatter_loc, three_vec(0,0,0), has_dir, cur_event->energy, cur_event->tof, sqrt(cur_event->energy / E_per_switch) * E_per_switch, spc_uncert, time_uncert_cm);
+						add_scatter = new_scatter(scatter_loc, three_vec(0,0,0), has_dir, cur_event->energy, cur_event->tof, sqrt(cur_event->energy / P_per_keV) * P_per_keV, spc_uncert, time_uncert_cm);
 					} else {
 						// normalize the electron direction
 						vec3d ele_dir_norm = vec_norm(ele_dir);
-						add_scatter = new_scatter(scatter_loc, ele_dir_norm, has_dir, cur_event->energy, cur_event->tof, sqrt(cur_event->energy / E_per_switch) * E_per_switch, spc_uncert, time_uncert_cm);
+						add_scatter = new_scatter(scatter_loc, ele_dir_norm, has_dir, cur_event->energy, cur_event->tof, sqrt(cur_event->energy / P_per_keV) * P_per_keV, spc_uncert, time_uncert_cm);
 						path_scatters++;
 					}
 					total_scatters++;
@@ -2046,9 +2124,9 @@ llist* build_scatters(llist* detector_history, int id, int* count_of_scatters) {
 					double new_eng = (eng_var * add_scatter->eng_uncert) + add_scatter->deposit;
 					// discretize the energy value to line up with the number of
 					// switched dye molecules
-					int switched_mol = (int)round(new_eng / E_per_switch);
-					add_scatter->eng_uncert = sqrt((double)switched_mol) * E_per_switch;
-					add_scatter->deposit = ((double)switched_mol) * E_per_switch;
+					int switched_mol = (int)round(new_eng / P_per_keV);
+					add_scatter->eng_uncert = sqrt((double)switched_mol) * P_per_keV;
+					add_scatter->deposit = ((double)switched_mol) * P_per_keV;
 					// done adding energy randomness
 					// done adding random variation
 					if (add_scatter->deposit <= MIN_SCAT_ENG) {
@@ -2836,8 +2914,8 @@ int main(int argc, char **argv) {
 			if (!strcasecmp(argv[i], "-E")) {
 				// change energy per scatter
 				if (argc > (i + 1)) {
-					E_per_switch = strtod(argv[i+1], NULL);
-					printf("Energy per switch set to %lf keV/switch\n", E_per_switch);
+					P_per_keV = strtod(argv[i+1], NULL);
+					printf("Energy per switch set to %lf keV/switch\n", P_per_keV);
 				} else {
 					fprintf(stderr, "-E flag not followed by float!\n");
 					return 1;
@@ -2964,6 +3042,8 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
+	detector_bore = shape_build(CYLINDER, bore_position, bore_dimentions, 3, -1.0);
+
 	fprintf(out_in_patient, "history number, in patient scatter occurance, ");
 	fprintf(out_in_patient, "scatters in branch 1, scatters in branch 2,");
 	fprintf(out_in_patient, "R1_1, R2_1, R3_1, R4_1, R5_1, ");
@@ -2973,10 +3053,10 @@ int main(int argc, char **argv) {
 	// llist *history = NULL;
 	if (binary) {
 		// history = load_history(in_histories, read_line_binary);
-		in_det_hist = load_historyb(in_det_histories, read_line_binary);
+		in_det_hist = load_history(in_det_histories, read_line_binary);
 	} else {
 		// history = load_history(in_histories, read_line);
-		in_det_hist = load_historyb(in_det_histories, read_line);
+		in_det_hist = load_history(in_det_histories, read_line);
 	}
 	// some extra vars for calculating percentage of in paitent scatters
 	// uint table[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
@@ -3171,4 +3251,3 @@ int main(int argc, char **argv) {
 	fclose(out_in_patient);
 	return 0;
 }
-
