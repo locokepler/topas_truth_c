@@ -2704,6 +2704,8 @@ scatter** find_double_endpoints_stat(llist* detector_history, double sigma_per_s
 		// no second gamma was found, so no line of responce can be made.
 		return NULL;
 	}
+	first_id = 3;
+	second_id = 2;
 
 	llist* scat_list1 = build_scatters(detector_history, first_id, &branch_scatters_1);
 	llist* scat_list2 = build_scatters(detector_history, second_id, &branch_scatters_2);
