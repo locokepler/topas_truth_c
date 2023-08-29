@@ -26,6 +26,11 @@
 #define BINDING_WIDTH 0.5 // a 1 sigma width in keV for the effects of electron binding energy and doppler
 #define USE_SCATTER_DISTANCE 0 // flag on if to use the distance between scatters as part of FOM
 #define BORE_RADIUS 45 // measured in cm
+#define SCANNER_THICKNESS 15 // measured in cm
+#define CRYSTAL_IN_PHI 1024 // these values roughly match uEXPLORER
+#define CRYSTAL_HEIGHT 1.5
+#define CRYSTAL_Z_THICKNESS 0.276
+
 
 double time_uncert_cm = 6.36; // in cm for one sigma, NOT ps or ns FWHM
 double spc_uncert = 0.1; // cm
@@ -40,6 +45,7 @@ int run_time_rand = 1;
 #define TREE_DEBUG 0
 #define SCATTER_LIST_DEBUG 0
 #define GRAPHVIZ_DEBUG 0
+#define CLUSTER_DEBUG 1
 FILE* debug_graphs = NULL;
 FILE* debug_scatter_lists = NULL;
 uint graph_id;
@@ -74,6 +80,15 @@ int used_scatters_2 = -1;
 float bore_position[3] = {0,0,0};
 float bore_dimentions[3] = {45, 200, 0};
 shape* detector_bore = NULL;
+
+typedef struct _crystal {
+	double energy;
+	double time;
+	int index;
+	int true_n;
+	int true_gamma;
+	vec3d pos;
+} crystal;
 
   
 // reads a line from the source file as an event
@@ -221,6 +236,24 @@ scatter* copy_scatter(scatter* a) {
 		new->truth->true_time = a->truth->true_time;
 	}
 	return new;
+}
+
+void print_scatter(scatter* a) {
+	if (a == NULL) {
+		return;
+	}
+	printf("scatter: E = %lf +- %lf, pos: ", a->deposit, a->eng_uncert);
+	vec_print(a->loc, stdout);
+	printf(", t = %lf +- %lf, gamma %i", a->time, a->time_uncert, (int)(a->has_dir));
+	if (a->truth != NULL) {
+		printf(", N = %i", a->truth->true_n);
+	}
+	printf("\n");
+}
+
+void* mappable_print_scatter(void* a) {
+	print_scatter((scatter*)a);
+	return a;
 }
 
 void* delete_scatter(void* in) {
@@ -555,44 +588,6 @@ uint inside_radius(double distance, double height, event* event) {
 	return 0;
 }
 
-// int rec_in_paitent(llist* list, double radius, double height, int id) {
-// 	if (list == NULL) {
-// 		return 0;
-// 	}
-// 	if (((event*)list->data)->id != id) {
-// 		return rec_in_paitent(list->down, radius, height, id);
-// 		// not our particle
-// 	}
-// 	if (!inside_radius(radius, height, (event*)(list->data))) {
-// 		// not inside in paitent radius, can't be in paitent scatter
-// 		// printf("rec_in_paitent: not inside\n");
-// 		return rec_in_paitent(list->down, radius, height, id);
-// 	}
-// 	// we now have a mention of the gamma inside the in paitent
-// 	// radius, now to check if it lost energy from it's previous
-// 	// mention
-// 	if ((list->up != NULL) && (((event*)(list->data))->id == ((event*)(list->up->data))->id)) {
-// 		// there is a previous mention of the same particle
-// 		// printf("Particle in loc w/ predicessor\n");
-// 		if (((event*)(list->data))->energy < ((event*)(list->up->data))->energy) {
-// 			// ok now the previous interaction of the same particle had a larger
-// 			// energy by more than the chosen energy range. We have an in paitent scatter!
-// 			// we can stop looking now.
-// 			event* ev = (event*)list->data;
-// 			// even though we have an in patient scatter we want to check we don't
-// 			// have a second one or more from this gamma
-// 			if (ev->energy < energy_cutoff)
-// 				return 100; 
-// 				// returns a large number of scatters so that the value
-// 				// can be spotted and rejected later in the code.
-// 			return 1 + rec_in_paitent(list->down, radius, height, id);
-// 			// will return >1 if an additional in patient scatter occcurs
-// 		}
-// 	}
-// 	// well better luck next time
-// 	// printf("rec_in_paitent: other problem\n");
-// 	return rec_in_paitent(list->down, radius, height, id);
-// }
 
 // returns 1 for finding the first gamma it runs across has an IPS. Returns a 
 // 2 for findign the second gamma it runs across has an IPS. These are then added
@@ -657,46 +652,81 @@ int in_patient(llist* list) {
 // 	return rec_in_paitent(list, radius, height, id);
 // }
 
-/*
- * find_annihilation_point
- * Takes a history and finds where the annihilation occured. If no
- * annihilation occured it returns NULL. If one did occur it returns an
- * array of doubles of length 3. This has the x,y,z position of the final
- * location of the positron
- * If it does not find an annihilation point it returns NULL
- */
-vec3d find_annihilation_point(llist *history) {
-	if (history == NULL) {
-		return three_vec(NAN,NAN,NAN);
-	}
-	history = list_head(history);
-	// looks for the first event that refers to a positron
-	while (((event*)(history->data))->particle != -11) {
-		history = history->down;
-		if (history == NULL) {
-			return three_vec(NAN,NAN,NAN);
-		}
-	}
-	// now look for the last event that refers to a positron
-	while ((history->down != NULL) && (((event*)(history->down->data))->particle == -11)) {
-		history = history->down;
-	}
-	// now at the last event, return the location as a 3-vector
-	return ((event*)(history->data))->location;
+
+// calculates the crystal number that given vector should be associated with
+// this is a signed index number. Negative numbers mean -Z values. Index changes
+// by 1 with rotations in phi, changes by the number of crystals in the layer
+// radially inward for increasing R, changes by the number of crystals in a Z
+// slice. This version assumes the same number of crystals in phi at all R values
+int pos_to_crystal_index(vec3d pos, int crystals_in_phi, double crystal_r, double z_thickness) {
+	// calculate the crystals in a z slice
+	pos.z += 200.0;
+	int z_silce_crystals = crystals_in_phi * ((int)ceil((double)SCANNER_THICKNESS / crystal_r));
+	int z_slice_index = (int)floor(pos.z / z_thickness) * z_silce_crystals;
+	// printf("pos_to: phi = %lf\n", vec_to_phi(pos));
+	int phi_index = (int)floor((vec_to_phi(pos) / (PI * 2.0)) * crystals_in_phi);
+	pos.z = 0.0;
+	// printf("pos_to: r = %lf\n", vec_mag(pos));
+	int r_index = (int)floor((vec_mag(pos) - (double)BORE_RADIUS) / crystal_r) * crystals_in_phi;
+	return phi_index + z_slice_index + r_index;
 }
 
-/*
- * line_to_dot_dist:
- * finds the distance from a line defined by the start and end points to a
- * given point. The distance is how far the minimum distance is.
- */
-double line_to_dot_dist(vec3d start, vec3d end, vec3d point) {
-	vec3d num_first_term = vec_sub(start, end);
-	vec3d num_sec_term = vec_sub(start, point);
-	// vec3* denom_vec = vec_sub(end, start);
-	double numerator = vec_mag(vec_cross(num_first_term, num_sec_term));
-	double denomenator = vec_mag(num_first_term);
-	return numerator / denomenator;
+
+vec3d crystal_index_to_pos(int index, int crystals_in_phi, double crystal_r, double z_thickness) {
+	int z_silce_crystals = crystals_in_phi * ((int)ceil((double)SCANNER_THICKNESS / crystal_r));
+	double z_dist = (index / z_silce_crystals) * z_thickness + (0.5 * z_thickness);
+	int index_no_z = index % z_silce_crystals;
+	double radius = (index_no_z / crystals_in_phi) * crystal_r + BORE_RADIUS + (0.5 * crystal_r);
+	int index_no_r = index_no_z % crystals_in_phi;
+	double phi = (((double)index_no_r + 0.5) / (double)crystals_in_phi) * (PI * 2.0);
+	vec3d cartesian;
+	cartesian.z = z_dist - 200.0;
+	cartesian.x = radius * cos(phi);
+	cartesian.y = radius * sin(phi);
+	// printf("to_pos: phi = %lf\n", phi);
+	// printf("to_pos: r = %lf\n", radius);
+	return cartesian;
+}
+
+int test_crystal_indicies() {
+	int pass = 0;
+	// first test case, check a vector inside the detector and see if when converted back to
+	// a vector it is close to the correct position
+	int crystals_in_phi = 1024; // these values roughly match uEXPLORER
+	double crystal_height = 1.5;
+	double z_thickness = 0.276;
+	vec3d initial_pos = three_vec(35.1, 34.3, -101.1);
+	// this was just a weird position to choose.
+	int index = pos_to_crystal_index(initial_pos, crystals_in_phi, crystal_height, z_thickness);
+	vec3d final_pos = crystal_index_to_pos(index, crystals_in_phi, crystal_height, z_thickness);
+	if (vec_mag(vec_sub(initial_pos, final_pos)) > 1.0) {
+		// currently set to fail so that it can be checked by eye
+		fprintf(stderr, "test_crystal_indicies-TEST FAILED: expected these two positions to be close:\n");
+		fprintf(stderr, "\tinitial position: ");
+		vec_print(initial_pos, stderr);
+		fprintf(stderr, "\n\tend position: ");
+		vec_print(final_pos, stderr);
+		fprintf(stderr, "\n\tindex %i\n", index);
+		pass += 1;
+	}
+
+
+	if (pass != 0) {
+		fprintf(stderr, "!!! test_crystal_indicies: TESTS FAILED !!!\n\t%i tests failed\n", pass);
+		return 1;
+	}
+	return 0;
+}
+
+void print_crystal(FILE* output, crystal* a) {
+	fprintf(output, "E = %lf keV, t = %lf ns, index %i at ", a->energy, a->time, a->index);
+	vec_print(crystal_index_to_pos(a->index, CRYSTAL_IN_PHI, CRYSTAL_HEIGHT, CRYSTAL_Z_THICKNESS), output);
+	fprintf(output, ", with true N of %i for gamma %i\n", a->true_n, a->true_gamma);
+}
+
+void* mappable_crystal_print(void* in) {
+	print_crystal(stdout, (crystal*)in);
+	return in;
 }
 
 // does what it says on the tin. Adds a and b in quadrature
@@ -925,216 +955,9 @@ double dist_sigma(scatter* a, scatter* b, double energy) {
 	return sigma;
 }
 
-/* 
- * scattering_iterator:
- * takes a history of scatters from a detector (position and energy information)
- * and determines the event it expects to be the true first scatter. It then
- * returns this scatter.
- * history->data must be of type scatter*
- * Method: Calls expected_energy_a on every possible orientation of the list of
- * scatters. If a scatter orientation has a closer energy to 511. keV then that
- * orientation is kept. If not it is ignored. Then the next orientation it run.
- */
-scatter* scattering_iterator(llist* scatter_list, double energy_percent) {
-	if (scatter_list == NULL) {
-		fprintf(stderr, "scattering_iterator: no history given\n");
-		return NULL;
-	}
-
-	// the current best find energy
-	double best_find = 0;
-	// the current best find scatter
-	scatter* best_scatter = NULL;
-	// length of the scatter list
-	int list_len = list_length(scatter_list);
-
-	if (list_len == 1) {
-		// only 1 scatter exists, return it
-		return NULL;
-		// return (scatter*)history->data;
-	}
-
-	if (list_len == 2) {
-		// only 2 scatters exit. return the brighter one
-		return NULL;
-		// if (((scatter*)history->data)->deposit > ((scatter*)history->down->data)->deposit) {
-		// 	return (scatter*)history->data;
-		// } else {
-		// 	return (scatter*)history->down->data;
-		// }
-	}
-
-	// time to turn the scattering list into an array for fast access
-	scatter** locations = (scatter**)malloc(list_len * sizeof(scatter*));
-	for (int i = 0; i < list_len; i++)
-	{
-		locations[i] = (scatter*)scatter_list->data;
-		scatter_list = scatter_list->down;
-	}
-	
 
 
-	double hypoth;
-	// double second_best = 0;
-	// now to iterate over all of the loop possibilites
-	for (int first = 0; first < list_len; first++)
-	{
-		for (int second = 0; second < list_len; second++)
-		{
-			for (int third = 0; third < list_len; third++)
-			{
-				if ((first != second) && (first != third) && (second != third)) {
-					hypoth = expected_energy_a(locations[first],
-											locations[second],
-											locations[third]);
-					// check if the hypothesis is better than previous
-					if (fabs(hypoth - ELECTRON_MASS) < fabs(best_find - ELECTRON_MASS)) {
-						// the current hypthesis is better than the previous best
-						if (GENERAL_DEBUG) {
-							printf("Scattering Iterator: new best scatter found:\n");
-							printf("%f keV at ", hypoth);
-							vec_print(locations[first]->loc, stdout);
-							printf("\n");
-						}
 
-						// second_best = best_find;
-						best_find = hypoth;
-						best_scatter = locations[first];
-					}
-				}
-			}	
-		}
-	}
-
-	// if (first_scat_hypot == 0) {
-	// 	first_scat_hypot = fabs(best_find - second_best);
-	// } else {
-	// 	second_scat_hypot = fabs(best_find - second_best);
-	// }
-
-	free(locations);
-	// done iterating, now have the best scatter found in the list
-	if (fabs(best_find - ELECTRON_MASS) < (energy_percent * ELECTRON_MASS)) {
-		// the result was within the energy cut
-		return best_scatter;
-	}
-	// no result found within the energy cutoff
-	return NULL;
-}
-
-/*
- * takes two scattering histories. Searches for the best guess as to the first
- * scatter in the first history. To do this it uses the locations in the second
- * history as endpoints of the LOR, then proceeds to do a 3 point approximation
- * of the kinematics of the Compton scattering. It chooses the scatter with the
- * smallest deviation from the expected energy (by probability of deviation).
- * This is then combined with the probability of that scatter being the first
- * using the brightest scatter ordering. If multiple good canidates are found,
- * the iteration continues further down the chain looking for cases with no
- * likely solutions.
- * 
- * inputs:
- * history1: a list of scatters with location, deposited energy, uncertanty in
- * position, and uncertanty in deposited energy. This is the locations where
- * the first scatter is being seached for. Only runs if this has 2 or more
- * scatters in it
- * 
- * history2: same type as history1, just the locations where the other side of
- * the LOR should be. Only runs if this has 1 or more scatters in it.
- * 
- * energy_percent: what the percentage cut is for acceptable scattering
- */
-scatter* multi_gamma_iterator(llist* history1, llist* history2, double energy_percent) {
-	if ((history1 == NULL) || (history2 == NULL)) {
-		fprintf(stderr, "multi_gamma_iterator: empty history given");
-		return NULL;
-	}
-
-	// first is setup. Best scatter found, behavior for undersize histories,
-	// copy histories into arrays for fast access.
-
-	double best_find = 0;
-
-	scatter* best_scatter = NULL;
-
-	int len_hist1 = list_length(history1);
-	int len_hist2 = list_length(history2);
-
-	if (len_hist1 < 2) {
-		// history1 is too short to run the iteration process.
-		return NULL;
-	}
-	if (len_hist2 < 1) {
-		// idk if it is possible to even get here, but we can't continue if we do
-		return NULL;
-	}
-
-	// time to turn the scattering list into an array for fast access
-	scatter** scatters1 = (scatter**)malloc(len_hist1 * sizeof(scatter*));
-	for (int i = 0; i < len_hist1; i++)	{
-		scatters1[i] = (scatter*)history1->data;
-		history1 = history1->down;
-	}
-
-	scatter** scatters2 = (scatter**)malloc(len_hist2 * sizeof(scatter*));
-	for (int i = 0; i < len_hist2; i++)	{
-		scatters2[i] = (scatter*)history2->data;
-		history2 = history2->down;
-	}
-
-	// a couple of variables for debug information
-	double hypoth;
-	double second_best = 0;
-
-
-	// time to iterate over all of the possible combinations. The avaliable
-	// configurations are:
-	// for all i in len_hist2 and all of j != k in len_hist1
-	for (int i = 0; i < len_hist2; i++) {
-		for (int j = 0; j < len_hist1; j++) {
-			for (int k = 0; k < len_hist1; k++) {
-				// can only do 3 point checks with j and k not being the same
-				if (j != k) {
-					hypoth = expected_energy_b(scatters2[i], scatters1[j], scatters1[k], NULL);
-					// check if the hypothesis is better than previous
-					if (fabs(hypoth - ELECTRON_MASS) < fabs(best_find - ELECTRON_MASS)) {
-						// the current hypthesis is better than the previous best
-						if (GENERAL_DEBUG) {
-							printf("2 hist Scattering Iterator: new best scatter found:\n");
-							printf("%f keV at ", hypoth);
-							vec_print(scatters1[j]->loc, stdout);
-							printf("\n");
-						}
-						second_best = best_find;
-						best_find = hypoth;
-						best_scatter = scatters1[j];
-					}
-				}
-			}
-		}
-	}
-
-	if (first_scat_hypot == 0) {
-		first_scat_hypot = fabs(best_find - second_best);
-	} else {
-		second_scat_hypot = fabs(best_find - second_best);
-	}
-
-	free(scatters1);
-	free(scatters2);
-	// done iterating, now have the best scatter found in the list
-	if (fabs(best_find - ELECTRON_MASS) < (energy_percent * ELECTRON_MASS)) {
-		// the result was within the energy cut
-		if (GENERAL_DEBUG) {
-			printf("multi_gamma_iterator: best scatter solution found at %f kev at:\n", best_find);
-			vec_print(best_scatter->loc, stdout);
-			printf("\n");
-		}
-		return best_scatter;
-	}
-	// no result found within the energy cutoff
-	return NULL;
-}
 
 // dot product of vector first->second locations and the electron direction
 // at second
@@ -1144,146 +967,7 @@ double scatter_dir_dot(scatter* first, scatter* second) {
 	return dot;
 }
 
-/*
- * takes two scattering histories. Searches for the best guess as to the first
- * scatter in the first history. To do this it uses the locations in the second
- * history as endpoints of the LOR, then proceeds to do a 3 point approximation
- * of the kinematics of the Compton scattering. It chooses the scatter with the
- * smallest deviation from the expected energy (by probability of deviation).
- * Any results that would requrire the electron to point in a non-physical
- * direction are rejected.
- * 
- * inputs:
- * history1: a list of scatters with location, deposited energy, uncertanty in
- * position, and uncertanty in deposited energy. This is the locations where
- * the first scatter is being seached for. Only runs if this has 2 or more
- * scatters in it
- * 
- * history2: same type as history1, just the locations where the other side of
- * the LOR should be. Only runs if this has 1 or more scatters in it.
- * 
- * energy_percent: what the percentage cut is for acceptable scattering
- */
-scatter* multi_gamma_ele_iterator(llist* history_near, llist* history_far, double energy_percent) {
-	if ((history_near == NULL) || (history_far == NULL)) {
-		fprintf(stderr, "multi_gamma_ele_iterator: empty history given");
-		return NULL;
-	}
 
-	// first is setup. Best scatter found, behavior for undersize histories,
-	// copy histories into arrays for fast access.
-
-	double best_find = 0;
-
-	scatter* best_scatter = NULL;
-
-	int len_hist_near = list_length(history_near);
-	int len_hist_far = list_length(history_far);
-
-	if (len_hist_near < 2) {
-		// history1 is too short to run the iteration process.
-		return NULL;
-	}
-	if (len_hist_far < 1) {
-		// idk if it is possible to even get here, but we can't continue if we do
-		return NULL;
-	}
-
-	// time to turn the scattering list into an array for fast access
-	scatter** scatters_near = (scatter**)malloc(len_hist_near * sizeof(scatter*));
-	for (int i = 0; i < len_hist_near; i++)	{
-		scatters_near[i] = (scatter*)history_near->data;
-		history_near = history_near->down;
-	}
-
-	scatter** scatters_far = (scatter**)malloc(len_hist_far * sizeof(scatter*));
-	for (int i = 0; i < len_hist_far; i++)	{
-		scatters_far[i] = (scatter*)history_far->data;
-		history_far = history_far->down;
-	}
-
-	// a couple of variables for debug information
-	double hypoth;
-	double second_best = 0;
-	int run_num;
-	if (predicted_vs_real[0] == 0) {
-		run_num = 0;
-	} else {
-		run_num = 1;
-	}
-
-	// time to iterate over all of the possible combinations. The avaliable
-	// configurations are:
-	// for all i in len_hist2 and all of j != k in len_hist1
-	for (int i = 0; i < len_hist_far; i++) {
-		for (int j = 0; j < len_hist_near; j++) {
-			double i_j_dot = scatter_dir_dot(scatters_far[i], scatters_near[j]);
-			vec3d in = vec_sub(scatters_far[i]->loc, scatters_near[j]->loc);
-			for (int k = 0; k < len_hist_near; k++) {
-				// can only do 3 point checks with j and k not being the same
-				if (j != k) {
-					// first check if the direction is physical
-					if (((i_j_dot <= 0) && (i_j_dot != -1)) &&
-							(scatter_dir_dot(scatters_near[k], scatters_near[j]) <= 0)) {
-						vec3d out = vec_sub(scatters_near[j]->loc, scatters_near[k]->loc);
-						vec3d gamma_cross = vec_cross(in, out);
-						vec3d gamma_cross_norm = vec_norm(gamma_cross);
-						char use_ele = 0;
-						vec3d plane;
-						if (!scatters_near[j]->has_dir) {
-							use_ele = 1;
-							vec3d ele_dir = vec_norm(scatters_near[j]->dir);
-							plane = vec_cross(gamma_cross_norm, ele_dir);
-						}
-						// the magnitude of plane is equal to the cos of the angle between the plane of the gamma
-						// scattering and the direction of the electron
-
-						if ((!use_ele) || (vec_mag(plane) > 0.0)) {
-
-							hypoth = expected_energy_b(scatters_far[i], scatters_near[j], scatters_near[k], NULL);
-							// check if the hypothesis is better than previous
-							if (fabs(hypoth - ELECTRON_MASS) < fabs(best_find - ELECTRON_MASS)) {
-								// the current hypthesis is better than the previous best
-								if (GENERAL_DEBUG) {
-									printf("multi_gamma_ele_iterator: new best scatter found:\n");
-									printf("%f keV at ", hypoth);
-									vec_print(scatters_near[j]->loc, stdout);
-									printf("\n");
-								}
-								second_best = best_find;
-								best_find = hypoth;
-								best_scatter = scatters_near[j];
-								predicted_vs_real[(2 * run_num)] = len_hist_near - j;
-								predicted_vs_real[(2 * run_num) + 1] = len_hist_near - k;
-							}				
-						}
-					}
-				}
-			}
-		}
-	}
-
-	if (first_scat_hypot == 0) {
-		first_scat_hypot = fabs(best_find - second_best);
-	} else {
-		second_scat_hypot = fabs(best_find - second_best);
-	}
-
-	free(scatters_near);
-	free(scatters_far);
-	// done iterating, now have the best scatter found in the list
-	if (fabs(best_find - ELECTRON_MASS) < (energy_percent * ELECTRON_MASS)) {
-		// the result was within the energy cut
-		if (GENERAL_DEBUG) {
-			printf("multi_gamma_ele_iterator: best scatter solution found at %f kev at:\n", best_find);
-			vec_print(best_scatter->loc, stdout);
-			printf("\n");
-		}
-		return best_scatter;
-	}
-	// no result found within the energy cutoff
-	return NULL;
-}
 
 /* build_array_no_i:
  * takes an array of scatters of length source_len and returns a copy of the
@@ -2009,24 +1693,19 @@ int closest_gamma(llist* history, vec3d target, double* deposited) {
  * build_scatters
  * takes the list of interactions in the detector volume and makes a list of
  * energy deposition locations that are the scatter locations. This is the
- * current version of the "cluster finding" algorithm. It uses truth data to
- * find the location of the deposit. It also uses the real energy quantity
- * deposited at the location, not an estimate using the switchillator.
- * It returns the head of a new list of the scatter locations.
+ * current version of the "cluster finding" algorithm. A list of all of the
+ * scatters is passed out, not combined into crystals. No resolutions are
+ * applied here.
  */
-llist* build_scatters(llist* detector_history, int id, int* count_of_scatters) {
+llist* build_scatters(llist* detector_history) {
 	if (detector_history == NULL) {
 		return NULL;
 	}
 	// looks to find the first instance of each electron showing up. Using the
-	// location of that eele_dirith a scatter
+	// location of that a scatter
 	// of a gamma with the same identifier as id. If all is good the location is
-	// added as a scatter with the electron's energy.
-
-	// now also determines the direction of the electron. This is returned as
-	// a simple vector pointing from the current place to the second location
-	// of the electron. If the electron does not produce a second location then
-	// the scatter is given a NULL value for the direction
+	// added as a scatter with the electron's energy plus any energy deposited by
+	// a gamma at that location
 
 	// put us at the start of the list
 	detector_history = list_head(detector_history);
@@ -2060,32 +1739,22 @@ llist* build_scatters(llist* detector_history, int id, int* count_of_scatters) {
 				//  so which gamma is it from?
 				double deposit;
 				int gamma_id = closest_gamma(detector_history, ((event*)detector_history->data)->location, &deposit);
-				if (gamma_id == id) {
-					// time to add this electron to the scatter list
-					if (count_of_scatters != NULL) {
-						count_of_scatters[0]++;
-					}
-					vec3d scatter_loc = (((event*)detector_history->data)->location);
-					event* cur_event = (event*)detector_history->data;
+				// time to add this electron to the scatter list
 
-					char has_dir = 0; // we aren't doing anything with electrons so let's not pretend
-					scatter* add_scatter;
-					double photons = cur_event->energy * P_per_keV;
-					add_scatter = new_scatter(scatter_loc, three_vec(0,0,0), has_dir, cur_event->energy + deposit, cur_event->tof, sqrt(photons) / P_per_keV, spc_uncert, time_uncert_cm);
-					scatter_truth* truth_info = (scatter_truth*)malloc(sizeof(scatter_truth));
-					truth_info->true_eng = cur_event->energy;
-					truth_info->true_time = cur_event->tof;
-					add_scatter->truth = truth_info;
+				vec3d scatter_loc = (((event*)detector_history->data)->location);
+				event* cur_event = (event*)detector_history->data;
 
-					if (add_scatter->deposit <= MIN_SCAT_ENG) {
-						// after energy randomness there can be negative energies
-						// if there is one delete the addition of this scatter
-						// and act as if no swichilator got flipped
-						delete_scatter(add_scatter); 
-					} else {
-						scatter_list = add_to_bottom(scatter_list, add_scatter);
-					}
-				}
+				// char has_dir = 0; // we aren't doing anything with electrons so let's not pretend
+				scatter* add_scatter;
+				double photons = cur_event->energy * P_per_keV;
+				add_scatter = new_scatter(scatter_loc, three_vec(0,0,0), gamma_id, cur_event->energy + deposit, cur_event->tof, sqrt(photons) / P_per_keV, spc_uncert, time_uncert_cm);
+				scatter_truth* truth_info = (scatter_truth*)malloc(sizeof(scatter_truth));
+				truth_info->true_eng = cur_event->energy;
+				truth_info->true_time = cur_event->tof;
+				add_scatter->truth = truth_info;
+
+				scatter_list = add_to_bottom(scatter_list, add_scatter);
+
 				// add the electron to the list of electrons we have checked
 				int* electron_id = (int*)malloc(sizeof(int));
 				*electron_id = ((event*)detector_history->data)->id;
@@ -2097,78 +1766,86 @@ llist* build_scatters(llist* detector_history, int id, int* count_of_scatters) {
 
 	fmap(checked_electrons, free_null);
 	delete_list(checked_electrons);
-
-	// go through and add the real n value for each scatter
-	// the list will be in reverse order due to TOPAS/Geant4 call structure
-	int length = list_length(scatter_list);
-	llist* head = scatter_list;
-	for (int i = 0; i < length; i++) {
-		scatter_truth* true_info = ((scatter*)(head->data))->truth;
-		if (true_info != NULL) {
-			true_info->true_n = length - i;
+	// go through and check which scatter N each one is
+	int gamma_2_N = 0;
+	int gamma_3_N = 0;
+	for (llist* ordering = list_tail(scatter_list); ordering != NULL; ordering = ordering->up) {
+		scatter* working_scatter = (scatter*)(ordering->data);
+		if ((working_scatter->truth != NULL) && (working_scatter->has_dir == 2)) {
+			gamma_2_N += 1;
+			working_scatter->truth->true_n = gamma_2_N;
+		} else if ((working_scatter->truth != NULL)) {
+			gamma_3_N += 1;
+			working_scatter->truth->true_n = gamma_3_N;
 		}
-		head = head->down;
 	}
 
-	// time to consoidate the various scatters. The following consolidation is done in O(nlog(n))
-	// Start with an entry in the scatter list. Check if there are any other scatters in the list
-	// within a spatial uncertainty of the current location. If there are add the energy of the
-	// other found scatters to the original, and make the position the weighted average position.
-	// After combining the scatters, remove all but the parent scatter.
-	scatter_list = list_head(scatter_list);
-	for (llist* uncombined_scatter_list = scatter_list; uncombined_scatter_list != NULL; uncombined_scatter_list = uncombined_scatter_list->down) {
-		scatter* working_scatter = (scatter*)(uncombined_scatter_list->data);
+	// return the list of scatters for consolidation into specific crystals
 
-		llist* search_scatter_list = uncombined_scatter_list->down;
-		while (search_scatter_list != NULL) {
-			// check how close the two scatters are
-			scatter* check_scatter = ((scatter*)(search_scatter_list->data));
-			vec3d separation = vec_sub(check_scatter->loc, working_scatter->loc);
-			if (vec_mag(separation) < 0.5 * spc_uncert) {
-				// ok they were close, combine the scatters
-				// choose the earliest time that could have been seen
-				working_scatter->time = (working_scatter->time < check_scatter->time) ? working_scatter->time : check_scatter->time;
-				// weighted average of the position. 
-				double weight = check_scatter->deposit / (check_scatter->deposit + working_scatter->deposit);
-				// weight gives how much to move along the vector from working_scatter towards check_scatter
-				vec3d new_loc = vec_add(working_scatter->loc, vec_scaler(separation, weight));
-				working_scatter->loc = new_loc;
-				// now combine the energies
-				working_scatter->deposit += check_scatter->deposit;
-                // handle any truth information tha is still here
-                if (working_scatter->truth != NULL) {
-                    if (check_scatter->truth != NULL) {
-                        working_scatter->truth->true_n = (working_scatter->truth->true_n < check_scatter->truth->true_n) ? working_scatter->truth->true_n : check_scatter->truth->true_n;
-                    }
-                    working_scatter->truth->true_eng = working_scatter->deposit;
-                    working_scatter->truth->true_time = working_scatter->time;
-                }
+	return scatter_list;
+}
 
-				// finally remove the excess scatter
-				delete_scatter(check_scatter);
-				llist* entry_for_removal = search_scatter_list;
-				search_scatter_list = search_scatter_list->up;
-				search_scatter_list->down = entry_for_removal->down;
-				if (entry_for_removal->down != NULL) {
-					entry_for_removal->down->up = entry_for_removal->up;
+// takes a list of scatters and makes a list of crystals that lit up, and how
+// much they did so.
+llist* build_crystals(llist* scatters) {
+	if (scatters == NULL) {
+		return NULL;
+	}
+	llist* list_of_crystals = NULL;
+
+	// we will work our way down the list of scatters adding each scatter's
+	// energy to the right crystal. If a scatter has the same crystal ID as
+	// an already existing scatter then we do not make a new crystal and instead
+	// add the energy to the current one
+	scatters = list_head(scatters);
+	while (scatters != NULL) {
+		scatter* working_scatter = (scatter*)(scatters->data);
+		int scatter_index = pos_to_crystal_index(working_scatter->loc, CRYSTAL_IN_PHI, CRYSTAL_HEIGHT, CRYSTAL_Z_THICKNESS);
+
+		// check to see if the crystals list has the current index
+		llist* check_crystals = list_head(list_of_crystals);
+		int preexisting_crystal = 0;
+		while ((check_crystals != NULL) && (!preexisting_crystal)) {
+			crystal* working_crystal = (crystal*)(check_crystals->data);
+			if (working_crystal->index == scatter_index) {
+				working_crystal->energy += working_scatter->deposit;
+				if (working_crystal->time > working_scatter->time) {
+					working_crystal->time = working_scatter->time;
 				}
-				free(entry_for_removal);
+				if (working_scatter->truth != NULL) {
+					if (working_crystal->true_n > working_scatter->truth->true_n) {
+						working_crystal->true_n = working_scatter->truth->true_n;
+					}
+				}
+				preexisting_crystal = 1;
 			}
-			// continue the search
-			search_scatter_list = search_scatter_list->down;
+
+
+			check_crystals = check_crystals->down;
+		}
+		if (preexisting_crystal == 0) {
+			// no preexisting crystal to add the energy to, need to make one;
+			crystal* new_crystal = (crystal*)malloc(sizeof(crystal));
+			new_crystal->energy = working_scatter->deposit;
+			new_crystal->index = scatter_index;
+			new_crystal->pos = crystal_index_to_pos(scatter_index, CRYSTAL_IN_PHI, CRYSTAL_HEIGHT, CRYSTAL_Z_THICKNESS);
+			new_crystal->time = working_scatter->time;
+			new_crystal->true_gamma = working_scatter->has_dir;
+			if (working_scatter->truth != NULL) {
+				new_crystal->true_n = working_scatter->truth->true_n;
+			} else {
+				new_crystal->true_n = 10000;
+			}
+			list_of_crystals = add_to_top(list_of_crystals, new_crystal);
 		}
 
+		scatters = scatters->down;
 	}
 
-	// now that the scatter list is consolidated, apply uncertainties to the whole shebang:
+	// here is where we would add energy and time resolution randomness.
+	for (llist* unrandom = list_head(list_of_crystals); unrandom != NULL; unrandom = unrandom->down) {
+		crystal* working_crystal = (crystal*)(unrandom->data);
 
-	llist* unrandomized_scatters = scatter_list;
-	while (unrandomized_scatters != NULL) {
-		scatter* working_scatter = (scatter*)(unrandomized_scatters->data);
-		// add random variation to the scatter location and time
-		double x_rand = 1.0 * (drand48() - 0.5);
-		double y_rand = 1.0 * (drand48() - 0.5);
-		double z_rand = 1.0 * (drand48() - 0.5);
 		double time_var = 0.0;
 		double eng_var = 0.0;
 		for (int i = 0; i < UNCERT_REP; i++) {
@@ -2180,53 +1857,114 @@ llist* build_scatters(llist* detector_history, int id, int* count_of_scatters) {
 		eng_var  -= ((float)(UNCERT_REP) * 0.5);
 		// distance and time now have their variation size
 
-		// assuming that the center of the bore is on the z axis
-		// the radial direction (taken as the z_rand value) is along that
-		// vector
-		vec3d radial = three_vec(working_scatter->loc.x, working_scatter->loc.y, 0);
-		vec3d radial_norm = vec_norm(radial);
-
-		radial = vec_scaler(radial_norm, z_rand * SPC_UNCERT_RAD);
-		// radial blurring calculated
-		vec3d bore = three_vec(0,0,1);
-		// direction of the bore
-		vec3d circumfrence = vec_cross(radial_norm, bore);
-		// direction around the circumfrence at the scatter location
-		vec3d circum_norm = vec_norm(circumfrence);
-		vec3d circum_rand = vec_scaler(circum_norm, y_rand * SPC_UNCERT_PLANE);
-		// blurring around the direction of the circumfrence
-		circum_rand.z += x_rand * SPC_UNCERT_PLANE;
-		// blurring along the direction of the bore
-		vec3d rand_space = vec_add(radial, circum_rand);
-		// combine all of the blurring
-		vec3d rand_loc = vec_add(working_scatter->loc, rand_space);
-		// add the blurring to the scatter location
-
-		working_scatter->loc = rand_loc;
-		// distance variation set
-		// SEE TIME VARIATION ON OR OFF
-		// if (run_time_rand) {
+		// calculate the amount to adjust the time by
 		double time_adjust = time_var * (time_uncert_cm / SPD_LGHT);
-		// printf("time randomness (ns) %lf\n", time_adjust);
-		working_scatter->time += time_adjust;
-		// }
-		// done adding time randomness
-		// find the new energy (after blurring)
-		// printf("energy: %lf\nuncertainty: %lf\nvariation: %lf\n", add_scatter->deposit, add_scatter->eng_uncert, eng_var);
-		double new_eng = (eng_var * (sqrt(working_scatter->deposit * P_per_keV) / P_per_keV)) + working_scatter->deposit;
-		// printf("original energy = %lf, \tnew energy = %lf\n", working_scatter->deposit, new_eng);
-		// discretize the energy value to line up with the number of
-		working_scatter->deposit = new_eng;
-        // set all of the uncertainties that have changed
-        working_scatter->eng_uncert = sqrt(working_scatter->deposit * P_per_keV) / P_per_keV;
-        working_scatter->space_uncert = SPC_UNCERT_PLANE;
+		// blur the time
+		working_crystal->time += time_adjust;
 
-		// done adding energy randomness
-		// done adding random variation
-		unrandomized_scatters = unrandomized_scatters->down;
+		// calculate the new energy using the number of photons we will count
+		double new_eng = (eng_var * (sqrt(working_crystal->energy * P_per_keV) / P_per_keV)) + working_crystal->energy;
+		working_crystal->energy = new_eng; // set the new energy
+
 	}
 
-	return scatter_list;
+	return list_of_crystals;
+}
+
+// takes a crystal and converts it to a scatter for use by a search algorithm
+scatter* crystal_to_scatter(crystal* in) {
+	if (in == NULL) {
+		return NULL;
+	}
+	scatter* new = new_scatter(in->pos, three_vec(0,0,0), in->true_gamma, in->energy, in->time, sqrt(in->energy / P_per_keV), spc_uncert, time_uncert_cm);
+	new->truth = (scatter_truth*)malloc(sizeof(scatter_truth));
+	new->truth->true_n = in->true_n;
+	return new;
+}
+
+// takes a list of crystal interactions and makes a pair of lists of scatters for processing
+// in the standard inverse_kinematics methods.
+// The two lists are made by cluster finding to determine the sets of spatially close scatters.
+// The cluster finding is done by k-means. Choose two points as inital means. Then for each crystal
+// calculate the closer mean and move the means to the average location of their crystals
+
+// if the code fails for some reason the function returns a 0. Otherwise it returns a 1.
+int cluster_finding(llist* list_of_crystals, llist** cluster_1, llist** cluster_2) {
+	if ((list_of_crystals == NULL) || (cluster_1 == NULL) || (cluster_2 == NULL)) {
+		// not all the arguments are available, cannot continue
+		return 0;
+	}
+	int length = list_length(list_of_crystals);
+	if (length < 2) {
+		return 0;
+	} else if (length == 2) {
+		// make one scatter list from each crystal
+		scatter* first = crystal_to_scatter((crystal*)(list_of_crystals->data));
+		cluster_1[0] = add_to_top(NULL, first);
+		scatter* second = crystal_to_scatter((crystal*)(list_of_crystals->down->data));
+		cluster_2[0] = add_to_top(NULL, second);
+		return 1;
+	}
+
+	// OK we now need to do actual cluster finding
+	// set the two initial mean locations to be the first and last crystals in the list
+	// for prior data handling reasons these are likely to be close to the correct positions
+	vec3d mean_1 = ((crystal*)(list_head(list_of_crystals)->data))->pos;
+	vec3d mean_2 = ((crystal*)(list_tail(list_of_crystals)->data))->pos;
+
+	// do Lloyd's algorithm for x iterations
+
+	for (int i = 0; i < 10; i++) {
+		llist* set_of_crystals = list_head(list_of_crystals);
+		vec3d adj_mean_1 = three_vec(0,0,0);
+		int count_mean_1 = 0;
+		vec3d adj_mean_2 = three_vec(0,0,0);
+		int count_mean_2 = 0;
+		while (set_of_crystals != NULL) {
+			crystal* working_crystal = (crystal*)(set_of_crystals->data);
+			// check to see which mean is closer
+			vec3d from_mean_1 = vec_sub(working_crystal->pos, mean_1);
+			vec3d from_mean_2 = vec_sub(working_crystal->pos, mean_2);
+			if (vec_mag(from_mean_1) < vec_mag(from_mean_2)) {
+				// mean_1 was closer
+				count_mean_1 += 1;
+				adj_mean_1 = vec_add(adj_mean_1, from_mean_1);
+			} else {
+				// mean_2 was closer
+				count_mean_2 += 1;
+				adj_mean_2 = vec_add(adj_mean_2, from_mean_2);
+			}
+
+			set_of_crystals = set_of_crystals->down;
+		}
+		// we have now found what cluster each is in and how much to move
+		// the means by
+		adj_mean_1 = vec_scaler(adj_mean_1, 1.0 / (double)count_mean_1);
+		adj_mean_2 = vec_scaler(adj_mean_2, 1.0 / (double)count_mean_2);
+		mean_1 = vec_add(mean_1, adj_mean_1);
+		mean_2 = vec_add(mean_2, adj_mean_2);
+	}
+
+	// we now have our set mean positions, lets make the two scatter lists based on that
+	llist* set_of_crystals = list_head(list_of_crystals);
+	cluster_1[0] = NULL;
+	cluster_2[0] = NULL;
+	while (set_of_crystals != NULL) {
+		crystal* working_crystal = (crystal*)(set_of_crystals->data);
+		scatter* new = crystal_to_scatter(working_crystal);
+		// check which cluster this one is in
+		if (vec_mag(vec_sub(working_crystal->pos, mean_1)) < vec_mag(vec_sub(working_crystal->pos, mean_2))) {
+			// this was placed into cluster 1
+			cluster_1[0] = add_to_bottom(cluster_1[0], new);
+		} else {
+			cluster_2[0] = add_to_bottom(cluster_2[0], new);
+		}
+
+		set_of_crystals = set_of_crystals->down;
+	}
+	// we have now divided the two sets of scatters into clusters
+
+	return 1;
 }
 
 // we now have the infirsturcture for finding what scatter associated with a
@@ -2234,431 +1972,8 @@ llist* build_scatters(llist* detector_history, int id, int* count_of_scatters) {
 // gamma) to get the two ends. Then from that we have the two ends and can
 // run a modified version of first_scat_miss from the energy cut calculations
 
-/*
- * find_endpoints
- * finds the ids of the first two gammas in the detector history. It is possible
- * for there to be more gammas than this due to intresting interactions, however
- * I am not looking to try and differentiate them currently. Once the first two
- * gamma ids are found, a call to build scatter is done on the first, then
- * scattering_iterator is run to find the expected first scatter. This is then
- * repeated for the other id. These two locations are then returned as a length
- * 2 array of the two scatter pointers. The line of responce is given by the
- * line between these two scatters
- */
-scatter** find_endpoints(llist* detector_history, double energy_percent) {
-	if (detector_history == NULL) {
-		return NULL;
-	}
-	// find the id of the first gamma
-
-	// first make sure we are at the top of the detector list
-	detector_history = list_head(detector_history);
-	llist* search_history = detector_history;
-	int first_id = 0;
-	int second_id = 0;
-
-	while (search_history != NULL) {
-		event* current_event = (event*)search_history->data;
-		if ((current_event->particle == 22) && (current_event->id != first_id)) {
-			// we have a gamma, and it isn't the same as the (possibly alreadly found)
-			// first gamma
-			if (!first_id) {
-				first_id = current_event->id;
-			} else {
-				second_id = current_event->id;
-				break;
-			}
-		}
-		search_history = search_history->down;
-	}
-	if (second_id == 0) {
-		// no second gamma was found, so no line of responce can be made.
-		return NULL;
-	}
-
-	llist* scat_list = build_scatters(detector_history, first_id, &branch_scatters_1);
-	if (scat_list == NULL) {
-		return NULL;
-	}
-	scatter* endpoint = scattering_iterator(scat_list, energy_percent);
-	// copy the scatter information over to a new structure so that the old list
-	// can be freed
-	if (endpoint == NULL) {
-		return NULL;
-	}
-	scatter* first_endpoint = copy_scatter(endpoint);
-	// free the old list of scatters:
-	fmap(scat_list, delete_scatter);
-	delete_list(scat_list);
-	// repeat for the second scatter
-	scat_list = build_scatters(detector_history, second_id, &branch_scatters_2);
-	if (scat_list == NULL) {
-		return NULL;
-	}
-	endpoint = scattering_iterator(scat_list, energy_percent);
-	if (endpoint == NULL) {
-		return NULL;
-	}
-	scatter* second_endpoint = copy_scatter(endpoint);
-	fmap(scat_list, delete_scatter);
-	delete_list(scat_list);
-
-	// make an array of the two new scatters to be sent out of the function
-	scatter** return_vals = (scatter**)malloc(2 * sizeof(scatter*));
-	return_vals[0] = first_endpoint;
-	return_vals[1] = second_endpoint;
-	return return_vals;
-}
-
-/*
- * find_endpoints_2hist
- * finds the ids of the first two gammas in the detector history. This looks using
- * the list from the detector history, passing multi_gamma_iterator to look at
- * the two histories and find cases where hist2->hist1a->hist1b produce useable
- * energies.
- */
-scatter** find_endpoints_2hist(llist* detector_history, double energy_percent) {
-	if (detector_history == NULL) {
-		return NULL;
-	}
-	// find the id of the first gamma
-
-	// first make sure we are at the top of the detector list
-	detector_history = list_head(detector_history);
-	llist* search_history = detector_history;
-	int first_id = 0;
-	int second_id = 0;
-
-	while (search_history != NULL) {
-		event* current_event = (event*)search_history->data;
-		if ((current_event->particle == 22) && (current_event->id != first_id)) {
-			// we have a gamma, and it isn't the same as the (possibly alreadly found)
-			// first gamma
-			if (!first_id) {
-				first_id = current_event->id;
-			} else {
-				second_id = current_event->id;
-				break;
-			}
-		}
-		search_history = search_history->down;
-	}
-	if (second_id == 0) {
-		// no second gamma was found, so no line of responce can be made.
-		return NULL;
-	}
-
-	llist* scat_list1 = build_scatters(detector_history, first_id, &branch_scatters_1);
-	llist* scat_list2 = build_scatters(detector_history, second_id, &branch_scatters_2);
-	if ((scat_list1 == NULL) || (scat_list2 == NULL)) {
-		if (scat_list1 == NULL) {
-			fmap(scat_list2, delete_scatter);
-			delete_list(scat_list2);
-		} else {
-			fmap(scat_list1, delete_scatter);
-			delete_list(scat_list1);
-		}
-		return NULL;
-	}
-	// run the actual finding of endpoint 1
-	scatter* endpoint1 = multi_gamma_iterator(scat_list1, scat_list2, energy_percent);
-	// now do the same with endpoint 2
-	scatter* endpoint2 = multi_gamma_iterator(scat_list2, scat_list1, energy_percent);
 
 
-	if ((endpoint1 == NULL) || (endpoint2 == NULL)) {
-		fmap(scat_list1, delete_scatter);
-		fmap(scat_list2, delete_scatter);
-		delete_list(scat_list1);
-		delete_list(scat_list2);
-		return NULL;
-	}
-
-	if (GENERAL_DEBUG) {
-		printf("find_endpoints_2hist: scatters found at:\n");
-		vec_print(endpoint1->loc, stdout);
-		printf("\n");
-		vec_print(endpoint2->loc, stdout);
-		printf("\n");
-	}
-
-	// copy the two endpoints to new scatter structures (allows freeing of
-	// scatter lists)
-
-	scatter *first_endpoint = copy_scatter(endpoint1);
-	scatter *second_endpoint = copy_scatter(endpoint2);
-
-	// free the old list of scatters:
-	fmap(scat_list1, delete_scatter);
-	fmap(scat_list2, delete_scatter);
-	delete_list(scat_list1);
-	delete_list(scat_list2);
-	
-
-	// make an array of the two new scatters to be sent out of the function
-	scatter** return_vals = (scatter**)malloc(2 * sizeof(scatter*));
-	return_vals[0] = first_endpoint;
-	return_vals[1] = second_endpoint;
-	if (GENERAL_DEBUG) {
-		printf("find_endpoints_2hist: returning scatters found at:\n");
-		vec_print(return_vals[0]->loc, stdout);
-		printf("\n");
-		vec_print(return_vals[1]->loc, stdout);
-		// vec_print(first_endpoint->loc, stdout);
-		// printf("\n");
-		// vec_print(second_endpoint->loc, stdout);
-		
-		printf("\n");
-	}
-	return return_vals;
-}
-
-/*
- * find_endpoints_ele_dir
- * finds the ids of the first two gammas in the detector history. This looks using
- * the list from the detector history, passing multi_gamma_iterator to look at
- * the two histories and find cases where hist2->hist1a->hist1b produce useable
- * energies. Also takes into account the electron direction to reject
- * non-physical solutions where the electron is in the same direction as the
- * vector from the scatter to the origin or resulting location
- */
-scatter** find_endpoints_ele_dir(llist* detector_history, double energy_percent) {
-	if (detector_history == NULL) {
-		return NULL;
-	}
-	// find the id of the first gamma
-
-	// first make sure we are at the top of the detector list
-	detector_history = list_head(detector_history);
-	llist* search_history = detector_history;
-	int first_id = 0;
-	int second_id = 0;
-
-	while (search_history != NULL) {
-		event* current_event = (event*)search_history->data;
-		if ((current_event->particle == 22) && (current_event->id != first_id)) {
-			// we have a gamma, and it isn't the same as the (possibly alreadly found)
-			// first gamma
-			if (!first_id) {
-				first_id = current_event->id;
-			} else {
-				second_id = current_event->id;
-				break;
-			}
-		}
-		search_history = search_history->down;
-	}
-	if (second_id == 0) {
-		// no second gamma was found, so no line of responce can be made.
-		return NULL;
-	}
-
-	llist* scat_list1 = build_scatters(detector_history, first_id, &branch_scatters_1);
-	llist* scat_list2 = build_scatters(detector_history, second_id, &branch_scatters_2);
-	if ((scat_list1 == NULL) || (scat_list2 == NULL)) {
-		if (scat_list1 == NULL) {
-			fmap(scat_list2, delete_scatter);
-			delete_list(scat_list2);
-		} else {
-			fmap(scat_list1, delete_scatter);
-			delete_list(scat_list1);
-		}
-		return NULL;
-	}
-	// run the actual finding of endpoint 1
-	scatter* endpoint1 = multi_gamma_ele_iterator(scat_list1, scat_list2, energy_percent);
-	// now do the same with endpoint 2
-	scatter* endpoint2 = multi_gamma_ele_iterator(scat_list2, scat_list1, energy_percent);
-
-
-	if ((endpoint1 == NULL) || (endpoint2 == NULL)) {
-		fmap(scat_list1, delete_scatter);
-		fmap(scat_list2, delete_scatter);
-		delete_list(scat_list1);
-		delete_list(scat_list2);
-		return NULL;
-	}
-
-	if (GENERAL_DEBUG) {
-		printf("find_endpoints_ele_dir: scatters found at:\n");
-		vec_print(endpoint1->loc, stdout);
-		printf("\n");
-		vec_print(endpoint2->loc, stdout);
-		printf("\n");
-	}
-
-	// copy the two endpoints to new scatter structures (allows freeing of
-	// scatter lists)
-
-	scatter *first_endpoint = copy_scatter(endpoint1);
-	scatter *second_endpoint = copy_scatter(endpoint2);
-
-	// free the old list of scatters:
-	fmap(scat_list1, delete_scatter);
-	fmap(scat_list2, delete_scatter);
-	delete_list(scat_list1);
-	delete_list(scat_list2);
-	
-
-	// make an array of the two new scatters to be sent out of the function
-	scatter** return_vals = (scatter**)malloc(2 * sizeof(scatter*));
-	return_vals[0] = first_endpoint;
-	return_vals[1] = second_endpoint;
-	if (GENERAL_DEBUG) {
-		printf("find_endpoints_ele_dir: returning scatters found at:\n");
-		vec_print(return_vals[0]->loc, stdout);
-		printf("\n");
-		vec_print(return_vals[1]->loc, stdout);
-		// vec_print(first_endpoint->loc, stdout);
-		// printf("\n");
-		// vec_print(second_endpoint->loc, stdout);
-		
-		printf("\n");
-	}
-	return return_vals;
-}
-
-/* 
- * find_endpoints_stat
- * finds the predicted endpoints of the first two gammas in the detector history
- * using a statistical determination method. For the first step a scatter is
- * chosen from each gamma. Then recursivly a single scatter is chosen from the
- * list of remaining scatters being seached, and the probability of the deviation
- * from physical that is found is determined. If this does not exceed the current
- * best find the process repeats until the list is empty. The recursive portion
- * is completed using the recursive_search function. The energy_percent value
- * provides a minimum probability that must be cleared for the result to be
- * passed out.
- */
-scatter** find_endpoints_stat(llist* detector_history, double sigma_per_scatter) {
-	if (detector_history == NULL) {
-		return NULL;
-	}
-	// find the id of the first gamma
-
-	// first make sure we are at the top of the detector list
-	detector_history = list_head(detector_history);
-	llist* search_history = detector_history;
-	int first_id = 0;
-	int second_id = 0;
-
-	while (search_history != NULL) {
-		event* current_event = (event*)search_history->data;
-		if ((current_event->particle == 22) && (current_event->id != first_id)) {
-			// we have a gamma, and it isn't the same as the (possibly alreadly found)
-			// first gamma
-			if (!first_id) {
-				first_id = current_event->id;
-			} else {
-				second_id = current_event->id;
-				break;
-			}
-		}
-		search_history = search_history->down;
-	}
-	if (second_id == 0) {
-		// no second gamma was found, so no line of responce can be made.
-		return NULL;
-	}
-
-	llist* scat_list1 = build_scatters(detector_history, first_id, &branch_scatters_1);
-	llist* scat_list2 = build_scatters(detector_history, second_id, &branch_scatters_2);
-	if ((scat_list1 == NULL) || (scat_list2 == NULL)) {
-		if (scat_list1 == NULL) {
-			fmap(scat_list2, delete_scatter);
-			delete_list(scat_list2);
-		} else {
-			fmap(scat_list1, delete_scatter);
-			delete_list(scat_list1);
-		}
-		return NULL;
-	}
-	// clear the alpha_n arrays
-	for (int i = 0; i < FIRST_N; i++) {
-		alpha_n_1[i] = -1;
-		alpha_n_2[i] = -1;
-	}
-	llist* current_loc1 = list_tail(scat_list1);
-	llist* current_loc2 = list_tail(scat_list2);
-	for (int i = 0; i < FIRST_N; i++) {
-		if ((current_loc1 != NULL) && (current_loc1->data != NULL)) {
-			n_eng_distro_n_1[i] = ((scatter*)(current_loc1->data))->deposit;
-			current_loc1 = current_loc1->up;
-		} else {
-			n_eng_distro_n_1[i] = -1;
-		}
-		if ((current_loc2 != NULL) && (current_loc2->data != NULL)) {
-			n_eng_distro_n_2[i] = ((scatter*)(current_loc2->data))->deposit;
-			current_loc2 = current_loc2->up;
-		} else {
-			n_eng_distro_n_2[i] = -1;
-		}
-	}
-
-	// run the actual finding of endpoint 1
-	scatter* endpoint1 = multi_gamma_stat_iteration(scat_list1, scat_list2, sigma_per_scatter, alpha_n_1, alpha_eng_distro_n_1);
-	// now do the same with endpoint 2
-	scatter* endpoint2 = multi_gamma_stat_iteration(scat_list2, scat_list1, sigma_per_scatter, alpha_n_2, alpha_eng_distro_n_2);
-
-	// if we failed just give the highest energy scatter. Leads to far more bad
-	// solutions but also doesn't leave anything on the table.
-	if (NEVER_CUT) {
-		if ((endpoint1 == NULL) && (scat_list1->data != NULL)) {
-			endpoint1 = scat_list1->data;
-		}
-		if ((endpoint2 == NULL) && (scat_list2->data != NULL)) {
-			endpoint2 = scat_list2->data;
-		}
-	}
-
-
-	if ((endpoint1 == NULL) || (endpoint2 == NULL)) {
-		fmap(scat_list1, delete_scatter);
-		fmap(scat_list2, delete_scatter);
-		delete_list(scat_list1);
-		delete_list(scat_list2);
-		missed_reconstructions += missed_reconstruction_IPS_mask;
-		return NULL;
-	}
-
-	if (GENERAL_DEBUG) {
-		printf("find_endpoints_ele_dir: scatters found at:\n");
-		vec_print(endpoint1->loc, stdout);
-		printf("\n");
-		vec_print(endpoint2->loc, stdout);
-		printf("\n");
-	}
-
-	// copy the two endpoints to new scatter structures (allows freeing of
-	// scatter lists)
-
-	scatter *first_endpoint = copy_scatter(endpoint1);
-	scatter *second_endpoint = copy_scatter(endpoint2);
-
-	// free the old list of scatters:
-	fmap(scat_list1, delete_scatter);
-	fmap(scat_list2, delete_scatter);
-	delete_list(scat_list1);
-	delete_list(scat_list2);
-	
-
-	// make an array of the two new scatters to be sent out of the function
-	scatter** return_vals = (scatter**)malloc(2 * sizeof(scatter*));
-	return_vals[0] = first_endpoint;
-	return_vals[1] = second_endpoint;
-	if (GENERAL_DEBUG) {
-		printf("find_endpoints_ele_dir: returning scatters found at:\n");
-		vec_print(return_vals[0]->loc, stdout);
-		printf("\n");
-		vec_print(return_vals[1]->loc, stdout);
-		// vec_print(first_endpoint->loc, stdout);
-		// printf("\n");
-		// vec_print(second_endpoint->loc, stdout);
-		
-		printf("\n");
-	}
-	return return_vals;
-}
 /* 
  * find_double_endpoints_stat
  * finds the predicted endpoints of the first two gammas in the detector history
@@ -2707,8 +2022,38 @@ scatter** find_double_endpoints_stat(llist* detector_history, double sigma_per_s
 	first_id = 3;
 	second_id = 2;
 
-	llist* scat_list1 = build_scatters(detector_history, first_id, &branch_scatters_1);
-	llist* scat_list2 = build_scatters(detector_history, second_id, &branch_scatters_2);
+	llist* scat_list1 = NULL;
+	llist* scat_list2 = NULL;
+	llist* full_scat_list = build_scatters(detector_history);
+	llist* crystal_list = build_crystals(full_scat_list);
+	if (CLUSTER_DEBUG) {
+		printf("crystal list: \n");
+		fmap(crystal_list, mappable_crystal_print);
+	}
+	int success = cluster_finding(crystal_list, &scat_list1, &scat_list2);
+	if (CLUSTER_DEBUG) {
+		printf("scatter list 1: \n");
+		fmap(scat_list1, mappable_print_scatter);
+		printf("scatter list 2: \n");
+		fmap(scat_list2, mappable_print_scatter);
+	}
+
+	fmap(full_scat_list, delete_scatter);
+	delete_list(full_scat_list);
+	fmap(crystal_list, free_null);
+	delete_list(crystal_list);
+	if (!success) {
+		if (scat_list1 != NULL) {
+			fmap(scat_list1, delete_scatter);
+			delete_list(scat_list1);
+		}
+		if (scat_list2 != NULL) {
+			fmap(scat_list2, delete_scatter);
+			delete_list(scat_list2);
+		}
+		return NULL;
+	}
+
 	if ((scat_list1 == NULL) || (scat_list2 == NULL)) {
 		if (scat_list1 == NULL) {
 			fmap(scat_list2, delete_scatter);
@@ -2841,59 +2186,7 @@ scatter** find_double_endpoints_stat(llist* detector_history, double sigma_per_s
 // 	return line_to_dot_dist(first_spot, second_spot, annh_loc);
 // }
 
-/* first_scat_miss_transverse:
- * takes a LOR and the location of the annihilation and returns the transverse
- * distance between the two. That is: the distance between the center of the LOR
- * and the annihilation location perpendicular to the direction of the LOR
- */
-double first_scat_miss_transverse(lor* lor, vec3d annh_loc) {
-	if (lor == NULL) {
-		return -1;
-	}
-	vec3d offset = vec_sub(annh_loc, lor->center);
-	vec3d perpendicular = vec_cross(offset, lor->dir);
-	double dist = vec_mag(perpendicular);
-	return dist;
-}
 
-/* first_scat_miss_longitudinal:
- * takes a LOR and the location of the annihilation and returns the
- * longitudinal distance between the two. That is: the distance between the
- * center of the LOR and the annihilation projected onto the direction of the
- * LOR.
- */
-double first_scat_miss_longitudinal(lor* lor, vec3d annh_loc) {
-	if (lor == NULL) {
-		return -1;
-	}
-	vec3d offset = vec_sub(annh_loc, lor->center);
-	double offset_dist = vec_mag(offset);
-	if (offset_dist < ENG_RNG) {
-		return offset_dist;
-	}
-	double dist = vec_dot(offset, lor->dir);
-	return dist;
-}
-
-/* 
- * looks to see if the given event is from the annihilation.
- * If it is, it returns the particle id, otherwise it returns a zero
- */
-int find_annih_gamma(event* item) {
-	if (item == NULL) {
-		fprintf(stderr, "find_annih_gamma passed NULL pointer\n");
-		return 0;
-	}
-	if (item->particle == 22) {
-		return item->id;
-	}
-	
-	// no longer works without origin data
-	// if (item->orgin[0] == 'a') {
-	// 	return item->id;
-	// }
-	return 0;
-}
 
 /*
  * create_lor
@@ -3103,7 +2396,7 @@ int main(int argc, char **argv) {
 	int run_in_patient = 1;
 	energy_cutoff = strtod(argv[3], NULL);
 	
-	if ((!test_expected_energy()) || (test_vec_to_phi() != 3) || (!test_factorial())) {
+	if ((!test_expected_energy()) || (test_vec_to_phi() != 3) || (!test_factorial()) || (test_crystal_indicies())) {
 		fprintf(stderr, "tests failed, exiting\n");
 		return 1;
 	}
