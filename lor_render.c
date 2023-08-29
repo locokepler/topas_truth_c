@@ -7,10 +7,14 @@
 #include <pthread.h>
 #include "ray_trace.h"
 #include "llist.h"
+#include <time.h>
+
 
 #define MAX_THREADS 4
 
 #define NORMAL_TABLE_SIZE 10000
+
+#define DEBUG_THREADS_PRINT 0
 
 pthread_t tid[MAX_THREADS];
 pthread_mutex_t volume_lock;
@@ -20,8 +24,10 @@ struct _add_lor_union {
 	lor* lor;
 	pthread_mutex_t lock;
 	pthread_cond_t cond;
+	pthread_mutex_t hold;
 	char flag;
 	char die;
+	int thread;
 };
 
 
@@ -909,11 +915,19 @@ void* long_life_thread_add_lor_plane(void *a) {
 		pthread_mutex_lock(&(home->lock));
 		die = home->die;
 		if (!home->flag) {
+			pthread_mutex_unlock(&(home->lock));
 			// nothing this check
 			// time to wait for an update
-			pthread_cond_wait(&(home->cond), &(home->lock));
-			pthread_mutex_unlock(&(home->lock));
-			pthread_cond_signal(&main_hold);
+			if (DEBUG_THREADS_PRINT)
+				fprintf(stderr, "thread %i waking main\n", home->thread);
+			pthread_cond_signal(&main_hold); // wake up the main thread if needed.
+			if (DEBUG_THREADS_PRINT)
+				fprintf(stderr, "thread %i pausing\n", home->thread);
+			pthread_mutex_lock(&(home->hold)); // lock ourselves down
+			pthread_cond_wait(&(home->cond), &(home->hold)); //
+			if (DEBUG_THREADS_PRINT)
+				fprintf(stderr, "thread %i waking up\n", home->thread);
+			pthread_mutex_unlock(&(home->hold));
 		} else {
 			// we have a new lor to check out
 			tick_lor = home->lor;
@@ -1044,8 +1058,9 @@ int main(int argc, char const *argv[])
 		working_lors[i].die = 0;
 		working_lors[i].flag = 0;
 		working_lors[i].universe = master_copy;
+		working_lors[i].thread = i;
 		pthread_cond_init(&(working_lors[i].cond), NULL);
-		if (pthread_mutex_init(&(working_lors[i].lock), NULL)) {
+		if (pthread_mutex_init(&(working_lors[i].lock), NULL) && pthread_mutex_init(&(working_lors[i].hold), NULL)) {
 			fprintf(stderr, "pthread: unable to make update lock, exiting.\n");
 			return(1);
 		}
@@ -1069,17 +1084,32 @@ int main(int argc, char const *argv[])
 				if (!working_lors[i].flag) {
 					// the thread already grabbed a lor to work on, time to point to
 					// the new one
+					if (DEBUG_THREADS_PRINT)
+						fprintf(stderr, "main: providing new LOR to thread %i\n", i);
 					working_lors[i].lor = operative_lor;
 					working_lors[i].flag = 1;
 					// wake the thread back up if it had been suspended
+					if (DEBUG_THREADS_PRINT)
+						fprintf(stderr, "main waking thread %i\n", i);
 					pthread_cond_signal(&(working_lors[i].cond));
 					cont = 1;
+				} else {
+					if (DEBUG_THREADS_PRINT)
+						fprintf(stderr, "main waking thread %i\n", i);
+					pthread_cond_signal(&(working_lors[i].cond)); // rewake the thread if it is stuck
 				}
 				pthread_mutex_unlock(&(working_lors[i].lock));
 			}
 			if (!cont) {
 				pthread_mutex_lock(&main_lock);
-				pthread_cond_wait(&main_hold, &main_lock);
+				if (DEBUG_THREADS_PRINT)
+					fprintf(stderr, "main: pausing\n");
+				struct timespec now;
+				clock_gettime(CLOCK_REALTIME, &now);
+				now.tv_nsec += 10000;
+				pthread_cond_timedwait(&main_hold, &main_lock, &now);
+				if (DEBUG_THREADS_PRINT)
+					fprintf(stderr, "main: waking up\n");
 				pthread_mutex_unlock(&main_lock);
 			}
 		}
