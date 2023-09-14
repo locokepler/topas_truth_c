@@ -23,7 +23,7 @@
 #define PHI_MODULES 12 // modules for trigger
 #define MODULE_SEPERATION 3 // min number of modules separation for trigger
 #define NEVER_CUT 0
-#define BINDING_WIDTH 0.5 // a 1 sigma width in keV for the effects of electron binding energy and doppler
+#define BINDING_WIDTH 5.0 // a 1 sigma width in keV for the effects of electron binding energy and doppler
 #define USE_SCATTER_DISTANCE 0 // flag on if to use the distance between scatters as part of FOM
 #define BORE_RADIUS 45 // measured in cm
 #define SCANNER_THICKNESS 15 // measured in cm
@@ -45,12 +45,12 @@ int run_time_rand = 1;
 #define TREE_DEBUG 0
 #define SCATTER_LIST_DEBUG 0
 #define GRAPHVIZ_DEBUG 0
-#define CLUSTER_DEBUG 1
+#define CLUSTER_DEBUG 0
 FILE* debug_graphs = NULL;
 FILE* debug_scatter_lists = NULL;
 uint graph_id;
 #define LOR_GROUP 0 // iff 1 outputs true and misID
-#define CUT_IPS 0 // do not output to Au/Ag/Pb files if an IPS happened
+#define CUT_IPS 0 // do not output to true/misID files if an IPS happened
 
 //OUTDATED if 0 output all found lors, 1 only with both T=R=1, 2 
 // only R!=T=1 for only 1, 3 only R!=T=1 for both 
@@ -77,6 +77,9 @@ float second_FOM = -1;
 int used_scatters_1 = -1;
 int used_scatters_2 = -1;
 
+int correct_clustering = 0;
+int total_clustering = 0;
+
 float bore_position[3] = {0,0,0};
 float bore_dimentions[3] = {45, 200, 0};
 shape* detector_bore = NULL;
@@ -85,7 +88,7 @@ typedef struct _crystal {
 	double energy;
 	double time;
 	int index;
-	int true_n;
+	uint true_n;
 	int true_gamma;
 	vec3d pos;
 } crystal;
@@ -246,7 +249,7 @@ void print_scatter(scatter* a) {
 	vec_print(a->loc, stdout);
 	printf(", t = %lf +- %lf, gamma %i", a->time, a->time_uncert, (int)(a->has_dir));
 	if (a->truth != NULL) {
-		printf(", N = %i", a->truth->true_n);
+		printf(", N = %X", a->truth->true_n);
 	}
 	printf("\n");
 }
@@ -600,7 +603,7 @@ int rec_in_paitent(llist* list, int reject_id) {
 	// finds the first two gammas of the given history and looks to see if they
 	// are just about 511 keV
 	event* current = (event*)list->data;
-	if ((current->particle == 22) && (reject_id == -1)) {
+	if ((current->particle == 22) && (reject_id == -1) && (current->id < 4)) {
 		// we have our first gamma
 		if (fabs(current->energy - ELECTRON_MASS) > 0.1) {
 			// we had an IPS, so lets say so
@@ -610,7 +613,7 @@ int rec_in_paitent(llist* list, int reject_id) {
 			return rec_in_paitent(list->down, reject_id);
 		}
 	}
-	if ((current->particle == 22) && (current->id != reject_id)) {
+	if ((current->particle == 22) && (current->id != reject_id) && (current->id < 4)) {
 		// different gamma!
 		if (fabs(current->energy - ELECTRON_MASS) > 0.1) {
 			// we had an IPS, so lets say so
@@ -721,7 +724,16 @@ int test_crystal_indicies() {
 void print_crystal(FILE* output, crystal* a) {
 	fprintf(output, "E = %lf keV, t = %lf ns, index %i at ", a->energy, a->time, a->index);
 	vec_print(crystal_index_to_pos(a->index, CRYSTAL_IN_PHI, CRYSTAL_HEIGHT, CRYSTAL_Z_THICKNESS), output);
-	fprintf(output, ", with true N of %i for gamma %i\n", a->true_n, a->true_gamma);
+	fprintf(output, ", with true N of");
+	uint true_n_mask = 0b1;
+	for (int i = 0; i < sizeof(int) * 8; i++) {
+		if (true_n_mask & a->true_n) {
+			fprintf(output, " %i,", i);
+		}
+		true_n_mask = true_n_mask << 1;
+	}
+
+	fprintf(output, " for gamma %i\n", a->true_gamma);
 }
 
 void* mappable_crystal_print(void* in) {
@@ -1033,7 +1045,7 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 	uint graph_label;
 	if (GRAPHVIZ_DEBUG && (loc->truth != NULL)) {
 		fprintf(debug_graphs, "%u;\n", graph_id);
-		fprintf(debug_graphs, "%u [label=\"N=%i\\nbest=%lf\\ncur=%lf\"];\n",graph_id, loc->truth->true_n,best,current);
+		fprintf(debug_graphs, "%u [label=\"N=%i\\nbest=%lf\\ncur=%lf\\neng=%lf keV\"];\n",graph_id, loc->truth->true_n,best,current, loc->deposit);
 		graph_label = graph_id;
 		graph_id++;
 	}
@@ -1813,9 +1825,7 @@ llist* build_crystals(llist* scatters) {
 					working_crystal->time = working_scatter->time;
 				}
 				if (working_scatter->truth != NULL) {
-					if (working_crystal->true_n > working_scatter->truth->true_n) {
-						working_crystal->true_n = working_scatter->truth->true_n;
-					}
+					working_crystal->true_n = working_crystal->true_n | ( 0b1 << working_scatter->truth->true_n);
 				}
 				preexisting_crystal = 1;
 			}
@@ -1832,9 +1842,9 @@ llist* build_crystals(llist* scatters) {
 			new_crystal->time = working_scatter->time;
 			new_crystal->true_gamma = working_scatter->has_dir;
 			if (working_scatter->truth != NULL) {
-				new_crystal->true_n = working_scatter->truth->true_n;
+				new_crystal->true_n = 0b1 << working_scatter->truth->true_n;
 			} else {
-				new_crystal->true_n = 10000;
+				new_crystal->true_n = 0b0;
 			}
 			list_of_crystals = add_to_top(list_of_crystals, new_crystal);
 		}
@@ -1878,7 +1888,15 @@ scatter* crystal_to_scatter(crystal* in) {
 	}
 	scatter* new = new_scatter(in->pos, three_vec(0,0,0), in->true_gamma, in->energy, in->time, sqrt(in->energy / P_per_keV), spc_uncert, time_uncert_cm);
 	new->truth = (scatter_truth*)malloc(sizeof(scatter_truth));
-	new->truth->true_n = in->true_n;
+	int true_n_mask = 0b1;
+	for (int i = 0; i < sizeof(int) * 8; i++) {
+		if (true_n_mask & in->true_n) {
+			new->truth->true_n = i;
+			break;
+		}
+		true_n_mask = true_n_mask << 1;
+	}
+	// new->truth->true_n = in->true_n;
 	return new;
 }
 
@@ -1949,6 +1967,11 @@ int cluster_finding(llist* list_of_crystals, llist** cluster_1, llist** cluster_
 	llist* set_of_crystals = list_head(list_of_crystals);
 	cluster_1[0] = NULL;
 	cluster_2[0] = NULL;
+	// set up some truth checking data to know how well the cluster finding went
+	int correct_find = 1;
+	int first_gamma = 0;
+	int second_gamma = 0;
+
 	while (set_of_crystals != NULL) {
 		crystal* working_crystal = (crystal*)(set_of_crystals->data);
 		scatter* new = crystal_to_scatter(working_crystal);
@@ -1956,12 +1979,30 @@ int cluster_finding(llist* list_of_crystals, llist** cluster_1, llist** cluster_
 		if (vec_mag(vec_sub(working_crystal->pos, mean_1)) < vec_mag(vec_sub(working_crystal->pos, mean_2))) {
 			// this was placed into cluster 1
 			cluster_1[0] = add_to_bottom(cluster_1[0], new);
+			if (first_gamma == 0) {
+				first_gamma = working_crystal->true_gamma;
+			} else {
+				if (first_gamma != working_crystal->true_gamma) {
+					correct_find = 0;
+				}
+			}
 		} else {
 			cluster_2[0] = add_to_bottom(cluster_2[0], new);
+			if (second_gamma == 0) {
+				second_gamma = working_crystal->true_gamma;
+			} else {
+				if (second_gamma != working_crystal->true_gamma) {
+					correct_find = 0;
+				}
+			}
 		}
 
 		set_of_crystals = set_of_crystals->down;
 	}
+	if (correct_find) {
+		correct_clustering += 1;
+	}
+	total_clustering += 1;
 	// we have now divided the two sets of scatters into clusters
 
 	return 1;
@@ -2435,7 +2476,7 @@ int main(int argc, char **argv) {
 	// begin the primary loop over all histories
 	while (in_det_hist != NULL) {
 		// print an update to how far we have made it
-		if ((hist_num / 10000) * 10000 == hist_num) {
+		if ((hist_num / 100000) * 100000 == hist_num) {
 			printf("history number: %u\n", hist_num);
 		}
 
@@ -2606,6 +2647,7 @@ int main(int argc, char **argv) {
 	printf("Number of possible branches: %llu\n", possible_branches);
 
 	printf("Missed reconstructions (without IPS): %u\n", missed_reconstructions);
+	printf("Cluster finding performace: %lf %%\n", 100. * ((float)correct_clustering / (float)total_clustering));
 
 	fclose(out_in_patient);
 	return 0;
