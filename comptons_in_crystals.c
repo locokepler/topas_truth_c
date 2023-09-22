@@ -30,9 +30,10 @@
 #define CRYSTAL_IN_PHI 1024 // these values roughly match uEXPLORER
 #define CRYSTAL_HEIGHT 1.5
 #define CRYSTAL_Z_THICKNESS 0.276
+char time_ordering = 0;
 
 
-double time_uncert_cm = 6.36; // in cm for one sigma, NOT ps or ns FWHM
+double time_uncert_cm = 3.82; // in cm for one sigma, NOT ps or ns FWHM 300ps = 3.82
 double spc_uncert = 0.1; // cm
 double P_per_keV = 30.0; // photons/keV
 int run_time_rand = 1;
@@ -49,18 +50,12 @@ int run_time_rand = 1;
 FILE* debug_graphs = NULL;
 FILE* debug_scatter_lists = NULL;
 uint graph_id;
-#define LOR_GROUP 0 // iff 1 outputs true and misID
+#define LOR_GROUP 1 // iff 1 outputs true and misID
 #define CUT_IPS 0 // do not output to true/misID files if an IPS happened
 
 //OUTDATED if 0 output all found lors, 1 only with both T=R=1, 2 
 // only R!=T=1 for only 1, 3 only R!=T=1 for both 
 
-int alpha_n_1[FIRST_N];
-int alpha_n_2[FIRST_N];
-float alpha_eng_distro_n_1[FIRST_N];
-float alpha_eng_distro_n_2[FIRST_N];
-float n_eng_distro_n_1[FIRST_N];
-float n_eng_distro_n_2[FIRST_N];
 uint hist_num;
 uint total_scatters = 0;
 uint path_scatters = 0;
@@ -93,6 +88,32 @@ typedef struct _crystal {
 	vec3d pos;
 } crystal;
 
+typedef struct _debug_data {
+	double dist_1;
+	double dist_2;
+	char photoelectric_1;
+	char photoelectric_2;
+	int branch_scatters_1;
+	int branch_scatters_2;
+	int alpha_n_1[FIRST_N];
+	int alpha_n_2[FIRST_N];
+} debug;
+
+void default_debug(debug* diagnostic) {
+	if (diagnostic != NULL) {
+		diagnostic->dist_1 = -1;
+		diagnostic->dist_2 = -1;
+		diagnostic->photoelectric_1 = 0;
+		diagnostic->photoelectric_2 = 0;
+		diagnostic->branch_scatters_1 = 0;
+		diagnostic->branch_scatters_2 = 0;
+		for (int i = 0; i < FIRST_N; i++) {
+			diagnostic->alpha_n_1[i] = -1;
+			diagnostic->alpha_n_2[i] = -1;
+		}
+	}
+	return;
+}
   
 // reads a line from the source file as an event
 event* read_line(FILE* source) {
@@ -364,35 +385,6 @@ llist* load_history(FILE* source, event* (*f)(FILE*)) {
 	return history;
 }
 
-// loads all of the events in a history.
-// also ends up getting the first event of the next history
-// to load it uses a function that take the file type and
-// outputs an event*
-llist* load_historyb(FILE* source, event* (*f)(FILE*)) {
-
-	static event* previous_event = NULL;
-	uint history_num;
-	llist* history = NULL;
-	if (previous_event == NULL) {
-		// history_num = 0;
-		previous_event = f(source);
-		if (previous_event == NULL) {
-			// probably at EOF, in any case we need to be done
-			return NULL;
-		}
-	}
-	history_num = previous_event->number;
-	while (history_num == previous_event->number) {
-		history = add_to_bottom(history, previous_event);
-		previous_event = f(source);
-		if (previous_event == NULL) {
-			// EOF reached
-			return history;
-		}
-	}
-	return history;
-}
-
 // now for a quick array sorting implemetation
 
 int scatter_dep_compare(void* va, void* vb) {
@@ -566,30 +558,6 @@ float myErfInv2(float x){
    return(sgn*sqrtf(-tt1 + sqrtf(tt1*tt1 - tt2)));
 }
 
-/* 
- * Checks to see if the current event was a gamma event (scattering)
- * closer to the center than the given distance. If it was it returns
- * 1 (true). If it was not inside it returns a
- * zero (false). Designed to be fast (so that it can be run on every
- * event).
- */
-uint inside_radius(double distance, double height, event* event) {
-	if (event->particle != 22) {
-		// not a gamma, can't be in paitent scatter
-		// printf("not a gamma\n");
-		return 0;
-	}
-	double radius2 = event->location.x * event->location.x 
-						+ event->location.y * event->location.y;
-	// printf("particle %i, distance^2 %d", event->particle, event->count);
-	if (sqrt(radius2) < distance) {
-		if (fabs(event->location.z) < height){
-			return 1;
-		}
-		return 0;
-	}
-	return 0;
-}
 
 
 // returns 1 for finding the first gamma it runs across has an IPS. Returns a 
@@ -640,20 +608,6 @@ int in_patient(llist* list) {
 	return rec_in_paitent(list, -1);
 }
 
-// /* 
-//  * Checks to see if there has been an in paitent scattering event in
-//  * the given history. An event is defined as a gamma showing up in the
-//  * list within the given radius of the z axis, with the previous instance
-//  * of the gamma having an energy greater by at least ENG_RNG. It finds
-//  * this information by calling rec_in_paitent, which checks over the
-//  * list for a gamma that fits the above conditions
-//  */
-// int in_patient(llist* list, double radius, double height, int id) {
-// 	if (list == NULL)
-// 		fprintf(stderr, "in_patient passed NULL pointer\n");
-// 	list = list_head(list);
-// 	return rec_in_paitent(list, radius, height, id);
-// }
 
 
 // calculates the crystal number that given vector should be associated with
@@ -663,11 +617,11 @@ int in_patient(llist* list) {
 // slice. This version assumes the same number of crystals in phi at all R values
 int pos_to_crystal_index(vec3d pos, int crystals_in_phi, double crystal_r, double z_thickness) {
 	// calculate the crystals in a z slice
-	pos.z += 200.0;
-	int z_silce_crystals = crystals_in_phi * ((int)ceil((double)SCANNER_THICKNESS / crystal_r));
-	int z_slice_index = (int)floor(pos.z / z_thickness) * z_silce_crystals;
+	pos.z += 200.0; // offset to avoid annoying truncation behavior
+	int z_silce_crystals = crystals_in_phi * ((int)ceil((double)SCANNER_THICKNESS / crystal_r)); // crystals in a z slice
+	int z_slice_index = (int)floor(pos.z / z_thickness) * z_silce_crystals; // how many z slices from 0
 	// printf("pos_to: phi = %lf\n", vec_to_phi(pos));
-	int phi_index = (int)floor((vec_to_phi(pos) / (PI * 2.0)) * crystals_in_phi);
+	int phi_index = (int)floor((vec_to_phi(pos) / (PI * 2.0)) * crystals_in_phi); // how far rotated in phi
 	pos.z = 0.0;
 	// printf("pos_to: r = %lf\n", vec_mag(pos));
 	int r_index = (int)floor((vec_mag(pos) - (double)BORE_RADIUS) / crystal_r) * crystals_in_phi;
@@ -676,16 +630,16 @@ int pos_to_crystal_index(vec3d pos, int crystals_in_phi, double crystal_r, doubl
 
 
 vec3d crystal_index_to_pos(int index, int crystals_in_phi, double crystal_r, double z_thickness) {
-	int z_silce_crystals = crystals_in_phi * ((int)ceil((double)SCANNER_THICKNESS / crystal_r));
-	double z_dist = (index / z_silce_crystals) * z_thickness + (0.5 * z_thickness);
-	int index_no_z = index % z_silce_crystals;
-	double radius = (index_no_z / crystals_in_phi) * crystal_r + BORE_RADIUS + (0.5 * crystal_r);
-	int index_no_r = index_no_z % crystals_in_phi;
-	double phi = (((double)index_no_r + 0.5) / (double)crystals_in_phi) * (PI * 2.0);
+	int z_silce_crystals = crystals_in_phi * ((int)ceil((double)SCANNER_THICKNESS / crystal_r)); // crystals in a z slice
+	double z_dist = (index / z_silce_crystals) * z_thickness + (0.5 * z_thickness); // how far in Z was this slice
+	int index_no_z = index % z_silce_crystals; // mod by z crystals
+	double radius = (index_no_z / crystals_in_phi) * crystal_r + BORE_RADIUS + (0.5 * crystal_r); // get the radius
+	int index_no_r = index_no_z % crystals_in_phi; // mod by radius
+	double phi = (((double)index_no_r + 0.5) / (double)crystals_in_phi) * (PI * 2.0); // get the phi
 	vec3d cartesian;
-	cartesian.z = z_dist - 200.0;
+	cartesian.z = z_dist - 200.0; // undo the z shift used to avoid a change in truncation behavior around 0
 	cartesian.x = radius * cos(phi);
-	cartesian.y = radius * sin(phi);
+	cartesian.y = radius * sin(phi); // convert from cylindrical to cartesian
 	// printf("to_pos: phi = %lf\n", phi);
 	// printf("to_pos: r = %lf\n", radius);
 	return cartesian;
@@ -793,7 +747,7 @@ double expected_uncert_b(double b, double theta, double uncert_b, double uncert_
  */
  double expected_energy_b(scatter* a, scatter* b, scatter* c, double* uncert) {
 	 if ((a == NULL) || (b == NULL) || (c == NULL)) {
-		 return 1.;
+		 return -1.;
 	 }
 
 	// first calculate the angle at b
@@ -839,11 +793,13 @@ double expected_uncert_b(double b, double theta, double uncert_b, double uncert_
 	if (uncert != NULL) {
 		double delta_e = expected_uncert_b(b->deposit, theta, b->eng_uncert, theta_uncert);
 		// add in a binding energy uncertainty:
-		delta_e = add_quadrature(delta_e, BINDING_WIDTH);
 		if (delta_e < 0) {
 			fprintf(stderr, "expected_energy_b: uncertanty negative: %lf\n",delta_e);
+			uncert[0] = delta_e;
+		} else {
+			delta_e = add_quadrature(delta_e, BINDING_WIDTH);
+			uncert[0] = delta_e;
 		}
-		uncert[0] = delta_e;
 	}
 
 	return gamma_to_b_e;
@@ -970,17 +926,6 @@ double dist_sigma(scatter* a, scatter* b, double energy) {
 
 
 
-
-// dot product of vector first->second locations and the electron direction
-// at second
-double scatter_dir_dot(scatter* first, scatter* second) {
-	vec3d a_less_b = vec_sub(first->loc, second->loc);
-	double dot = vec_dot(a_less_b, second->dir);
-	return dot;
-}
-
-
-
 /* build_array_no_i:
  * takes an array of scatters of length source_len and returns a copy of the
  * array without the element that was at location i in the source array.
@@ -1010,12 +955,17 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 			fprintf(debug_graphs, "%u [label=\"end of check\"];\n", graph_id);
 			graph_id++;
 		}
-		// if ((loc != NULL) && (path != NULL) && (loc->truth != NULL)) {
-		// 	float* best_N_return = (float*)malloc(sizeof(float) * 2);
-		// 	best_N_return[0] = loc->truth->true_n;
-		// 	best_N_return[1] = loc->deposit;
-		// 	path[0] = add_to_top(NULL, best_N_return);
-		// }
+		if (path != NULL) {
+			float* best_N_return = (float*)malloc(sizeof(float) * 2);
+			if (origin->truth != NULL) {
+				best_N_return[0] = loc->truth->true_n;
+				best_N_return[1] = loc->truth->true_eng;
+			} else {
+				best_N_return[0] = -1;
+				best_N_return[1] = -1;
+			}
+			path[0] = add_to_top(NULL, best_N_return);
+		}
 		return current;
 	}
 	if (best < current) {
@@ -1050,7 +1000,7 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 		graph_id++;
 	}
 
-	double energy_uncert;
+	double energy_uncert = -1;
 	vec3d in = vec_sub(origin->loc, loc->loc);
 
 	double better_find = INFINITY;
@@ -1063,95 +1013,109 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 	for (int i = 0; i < remain_count; i++) {
 		// first calcuate the probability of our current deviation
 		double prediction = expected_energy_b(origin, loc, remaining[i], &energy_uncert);
-		if (energy_uncert < 0) {
-			fprintf(stderr, "recursive_search: negative energy error found (%lf). Check given scatter errors\n",energy_uncert);
-			fprintf(stderr, "\terror thrown on history %i\n", hist_num);
-		}
-		// calculate the combined error of the incoming energy and expectation
-		double comb_uncert = add_quadrature(inc_uncert, energy_uncert);
-		double energy_error = fabs(inc_eng - prediction) / comb_uncert; // error between
-		// double new_energy = inc_eng - loc->deposit; // could maybe be the value
-		// of expectation - loc->deposit
-		double new_energy = inc_eng - loc->deposit;
-		double new_eng_uncert = add_quadrature(inc_uncert, loc->eng_uncert);
-		// the a->b gamma prediction and the value from earlier in the chain
-		double step_error = energy_error;
-		if ((step_error + current < best) && (step_error < MAX_SINGLE_FOM) && USE_SCATTER_DISTANCE) {
-			// no sense in checking other constraints if we already fail
-			// find the error based on the distance traveled between the two interaction locations
-			double dist_error = dist_sigma(loc, remaining[i], prediction);
-			step_error = add_quadrature(step_error, dist_error);
-		}
-
-		// now find the error in electron direction plane
-		if (loc->has_dir) {
-			// only do this if there is a point. No electron direction then you
-			// can't check if it is in the plane.
-
-			vec3d outgoing = vec_sub(loc->loc, remaining[i]->loc);
-			// direction heading out from the current location to the next location
-			vec3d scatter_plane_normal = vec_cross(in, outgoing);
-			// creates a normal to the plane of the scattering origin->loc->i
-			vec3d plane_norm_hat = vec_norm(scatter_plane_normal);
-			// normalizes the plane perpendicular
-			double out_of_plane = vec_dot(plane_norm_hat, loc->dir);
-			// has the value of cosine of the angle between the plane normal and the
-			// direction of the electron. This means that for perfect in the plane
-			// behavior the value is 0, out of the plane +- 1.
-			step_error = add_quadrature(step_error, abs(out_of_plane * OUT_OF_PLANE_WEIGHT));
-		}
-		// done calcuating what the current paths uncertanty is, lets combine it
-		// with the current uncertanty to check if we are worse than the best
-		// solution so far.
-		// double combined_error = add_quadrature(step_error, current);
-		double combined_error = step_error + current;
-		uint part_graph_id;
-		if(GRAPHVIZ_DEBUG && (remaining[i]->truth != NULL)) {
-			fprintf(debug_graphs, "\t%u -> %u;\n", graph_label, graph_id);
-			fprintf(debug_graphs, "\t%u [label=\"N=%i\\ntry=%lf\"];\n", graph_id, remaining[i]->truth->true_n, combined_error);
-			part_graph_id = graph_id;
-			graph_id++;
-		}
-		if (TREE_DEBUG) {
-			printf("\tstep error: %lf, \tcombined error: %lf\n", step_error, combined_error);
-		}
-
-
-		if ((combined_error < best) && (step_error < MAX_SINGLE_FOM)) {
-			// time to go one layer further
-			scatter** new_array = build_array_no_i(remaining, remain_count, i);
-			// continuing_path = NULL;
-
-			if (GRAPHVIZ_DEBUG) {
-				fprintf(debug_graphs, "%u -> ", part_graph_id);
+		if (prediction < 0) {
+			// we need to skip the work on this because there is no viable prediction
+		} else {
+			if (energy_uncert < 0) {
+				fprintf(stderr, "recursive_search: negative energy error found (%lf). Check given scatter errors\n",energy_uncert);
+				fprintf(stderr, "\terror thrown on history %i\n", hist_num);
+			}
+			// calculate the combined error of the incoming energy and expectation
+			double comb_uncert = add_quadrature(inc_uncert, energy_uncert);
+			double energy_error = fabs(inc_eng - prediction) / comb_uncert; // error between
+			// double new_energy = inc_eng - loc->deposit; // could maybe be the value
+			// of expectation - loc->deposit
+			double new_energy = inc_eng - loc->deposit;
+			double new_eng_uncert = add_quadrature(inc_uncert, loc->eng_uncert);
+			// the a->b gamma prediction and the value from earlier in the chain
+			double step_error = energy_error;
+			if ((step_error + current < best) && (step_error < MAX_SINGLE_FOM) && USE_SCATTER_DISTANCE) {
+				// no sense in checking other constraints if we already fail
+				// find the error based on the distance traveled between the two interaction locations
+				double dist_error = dist_sigma(loc, remaining[i], prediction);
+				step_error = add_quadrature(step_error, dist_error);
 			}
 
-			double below = recursive_search(best, combined_error, new_energy, new_eng_uncert, loc, remaining[i], new_array, remain_count - 1, &continuing_path);
+			// now find the error in electron direction plane
+			if (loc->has_dir) {
+				// only do this if there is a point. No electron direction then you
+				// can't check if it is in the plane.
 
-			// if (GRAPHVIZ_DEBUG) {
-			// 	fprintf(debug_graphs, "} %u -> {", graph_label);
-			// }
+				vec3d outgoing = vec_sub(loc->loc, remaining[i]->loc);
+				// direction heading out from the current location to the next location
+				vec3d scatter_plane_normal = vec_cross(in, outgoing);
+				// creates a normal to the plane of the scattering origin->loc->i
+				vec3d plane_norm_hat = vec_norm(scatter_plane_normal);
+				// normalizes the plane perpendicular
+				double out_of_plane = vec_dot(plane_norm_hat, loc->dir);
+				// has the value of cosine of the angle between the plane normal and the
+				// direction of the electron. This means that for perfect in the plane
+				// behavior the value is 0, out of the plane +- 1.
+				step_error = add_quadrature(step_error, abs(out_of_plane * OUT_OF_PLANE_WEIGHT));
+			}
+			if (time_ordering) {
+				// we are allowed to do time ordering, so check how much later origin was than loc.
+				// the amount later / uncertainty is the size of the error. If origin was earlier than
+				// loc as would be expected we have zero error. It's not a perfect description but it
+				// gets rid of very bad answers
+				if (origin->time > loc->time) {
+					double difference = origin->time - loc->time;
+					step_error = add_quadrature(step_error, difference * SPD_LGHT / add_quadrature(origin->time_uncert, loc->time_uncert));
+				}
+			}
+			// done calcuating what the current paths uncertanty is, lets combine it
+			// with the current uncertanty to check if we are worse than the best
+			// solution so far.
+			// double combined_error = add_quadrature(step_error, current);
+			double combined_error = step_error + current;
+			uint part_graph_id;
+			if(GRAPHVIZ_DEBUG && (remaining[i]->truth != NULL)) {
+				fprintf(debug_graphs, "\t%u -> %u;\n", graph_label, graph_id);
+				fprintf(debug_graphs, "\t%u [label=\"N=%i\\ntry=%lf\"];\n", graph_id, remaining[i]->truth->true_n, combined_error);
+				part_graph_id = graph_id;
+				graph_id++;
+			}
+			if (TREE_DEBUG) {
+				printf("\tstep error: %lf, \tcombined error: %lf\n", step_error, combined_error);
+			}
 
-			free(new_array);
-			if (below < better_find) {
-				// we found a better result
-				better_find = below;
-				if (below < best) {
-					best = below;
+
+			if ((combined_error < best) && (step_error < MAX_SINGLE_FOM)) {
+				// time to go one layer further
+				scatter** new_array = build_array_no_i(remaining, remain_count, i);
+				// continuing_path = NULL;
+
+				if (GRAPHVIZ_DEBUG) {
+					fprintf(debug_graphs, "%u -> ", part_graph_id);
 				}
 
-				// begin N vs alpha work
-				if (best_path != NULL) {
-					fmap(best_path, free_null);
-					delete_list(best_path);
-					best_path = NULL;
+				double below = recursive_search(best, combined_error, new_energy, new_eng_uncert, loc, remaining[i], new_array, remain_count - 1, &continuing_path);
+
+				// if (GRAPHVIZ_DEBUG) {
+				// 	fprintf(debug_graphs, "} %u -> {", graph_label);
+				// }
+
+				free(new_array);
+				if (below < better_find) {
+					// we found a better result
+					better_find = below;
+					if (below < best) {
+						best = below;
+					}
+
+					// begin N vs alpha work
+					if (best_path != NULL) {
+						fmap(best_path, free_null);
+						delete_list(best_path);
+						best_path = NULL;
+					}
+					best_path = continuing_path;
+					continuing_path = NULL;
+				} else {
+					fmap(continuing_path, free_null);
+					delete_list(continuing_path);
+					continuing_path = NULL;
 				}
-				best_path = continuing_path;
-				continuing_path = NULL;
-			} else {
-				fmap(continuing_path, free_null);
-				delete_list(continuing_path);
-				continuing_path = NULL;
 			}
 		}
 	}
@@ -1182,7 +1146,7 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 }
 
 
-scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, double sigma_per_scatter, int* best_find_array, float* alpha_eng_distro) {
+scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, double sigma_per_scatter, int* best_find_array) {
 	if ((history_near == NULL) || (history_far == NULL)) {
 		return NULL;
 	}
@@ -1353,11 +1317,9 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
 		for (int i = 0; i < FIRST_N; i++) {
 			if (current_location != NULL) {
 				best_find_array[i] = (int)(((float*)(current_location->data))[0]);
-				alpha_eng_distro[i] = ((float*)current_location->data)[1];
 				current_location = current_location->down;
 			} else {
 				best_find_array[i] = -1;
-				alpha_eng_distro[i] = -1;
 			}
 		}
 	}
@@ -1383,13 +1345,15 @@ scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, dou
  * If that FOM also passes the test then the two FOMs are combined. This combination
  * is then minimized
  */
-scatter** double_tree_stat_iteration(llist* history_1, llist* history_2, double sigma_per_scatter) {
+scatter** double_tree_stat_iteration(llist* history_1, llist* history_2, double sigma_per_scatter, double energy_cut, debug* diagnostic) {
 	if ((history_1 == NULL) || (history_2 == NULL)) {
 		return NULL;
 	}
+	diagnostic->photoelectric_1 = 0;
+	diagnostic->photoelectric_2 = 0;
+
 	// for each in history near, choose a history far and run the recursive search.
 	// hang onto the best result after each point
-
 
 	scatter* best_scatter_1 = NULL;
 	scatter* best_scatter_2 = NULL;
@@ -1401,33 +1365,29 @@ scatter** double_tree_stat_iteration(llist* history_1, llist* history_2, double 
 		// behavior for keeping singles goes here. If we are to keep singles
 		// we should return the single from any of these that have a single
 		// scatter, and run the tree search on any others
-		if (KEEP_SINGLES) {
-			scatter** endpoints = (scatter**)calloc(2, sizeof(scatter*));
-			if (len_hist_1 == 1) {
-				// hist 1 has a single scatter
-				endpoints[0] = history_1->data;
-				if (((scatter*)(history_1->data))->truth != NULL) {
-					alpha_n_1[0] = ((scatter*)(history_1->data))->truth ->true_n;
-					alpha_eng_distro_n_1[0] = ((scatter*)(history_1->data))->truth ->true_eng;
-				}
+		scatter** endpoints = (scatter**)calloc(2, sizeof(scatter*));
+		if (len_hist_1 == 1) {
+			// hist 1 has a single scatter
+			if (fabs(((scatter*)(history_1->data))->deposit - ELECTRON_MASS) < (energy_cut * ELECTRON_MASS)) {
+				endpoints[0] = ((scatter*)(history_1->data));
+				diagnostic->alpha_n_1[0] = ((scatter*)(history_1->data))->truth ->true_n;
+				diagnostic->photoelectric_1 = 1;
 			}
-			if (len_hist_2 == 1) {
-				endpoints[1] = history_2->data;
-				if (((scatter*)(history_2->data))->truth != NULL) {
-					alpha_n_2[0] = ((scatter*)(history_2->data))->truth ->true_n;
-					alpha_eng_distro_n_2[0] = ((scatter*)(history_2->data))->truth ->true_eng;
-				}
-
-			}
-			if (endpoints[0] == NULL) {
-				endpoints[0] = multi_gamma_stat_iteration(history_1, history_2, sigma_per_scatter, alpha_n_1, alpha_eng_distro_n_1);
-			}
-			if (endpoints[1] == NULL) {
-				endpoints[1] = multi_gamma_stat_iteration(history_2, history_1, sigma_per_scatter, alpha_n_2, alpha_eng_distro_n_2);
-			}
-			return endpoints;
 		}
-		return NULL;
+		if (len_hist_2 == 1) {
+			if (fabs(((scatter*)(history_2->data))->deposit - ELECTRON_MASS) < (energy_cut * ELECTRON_MASS)) {
+				endpoints[1] = ((scatter*)(history_2->data));
+				diagnostic->alpha_n_2[0] = ((scatter*)(history_2->data))->truth ->true_n;
+				diagnostic->photoelectric_2 = 1;
+			}
+		}
+		if ((endpoints[0] == NULL) && (len_hist_1 > 1)) {
+			endpoints[0] = multi_gamma_stat_iteration(history_1, history_2, sigma_per_scatter, diagnostic->alpha_n_1);
+		}
+		if ((endpoints[1] == NULL) && (len_hist_2 > 1)) {
+			endpoints[1] = multi_gamma_stat_iteration(history_2, history_1, sigma_per_scatter, diagnostic->alpha_n_1);
+		}
+		return endpoints;
 	}
 
 	double best_find_1 = sigma_per_scatter * (len_hist_1 - SKIP);
@@ -1519,6 +1479,12 @@ scatter** double_tree_stat_iteration(llist* history_1, llist* history_2, double 
 	if (len_hist_2 > LARGEST + SKIP) {
 		len_hist_2 = LARGEST + SKIP;
 	}
+	if (diagnostic != NULL) {
+		// determine the distance between the first two scatters of each scatter list
+		diagnostic->dist_1 = vec_dist(scatters_1_short[0]->loc, scatters_1_short[1]->loc);
+		diagnostic->dist_2 = vec_dist(scatters_2_short[0]->loc, scatters_2_short[1]->loc);
+	}
+
 
 	if (SCATTER_LIST_DEBUG) {
 		fprintf(debug_scatter_lists, "First gamma scatters:\n");
@@ -1621,27 +1587,27 @@ scatter** double_tree_stat_iteration(llist* history_1, llist* history_2, double 
 		llist* current_location = NULL;
 		scatter* search_scatter = NULL;
 		int *t_vs_r;
-		float* E_t_vs_r;
+		// float* E_t_vs_r;
 		if (i == 0) {
 			current_location = list_head(best_found_path_1);
 			search_scatter = best_scatter_1;
-			t_vs_r = alpha_n_1;
-			E_t_vs_r = alpha_eng_distro_n_1;
+			t_vs_r = diagnostic->alpha_n_1;
+			// E_t_vs_r = alpha_eng_distro_n_1;
 		} else {
 			current_location = list_head(best_found_path_2);
 			search_scatter = best_scatter_2;
-			t_vs_r = alpha_n_2;
-			E_t_vs_r = alpha_eng_distro_n_2;
+			t_vs_r = diagnostic->alpha_n_2;
+			// E_t_vs_r = alpha_eng_distro_n_2;
 		}
 		if (search_scatter != NULL) {
 			for (int i = 0; i < FIRST_N; i++) {
 				if (current_location != NULL) {
 					t_vs_r[i] = (int)(((float*)(current_location->data))[0]);
-					E_t_vs_r[i] = ((float*)current_location->data)[1];
+					// E_t_vs_r[i] = ((float*)current_location->data)[1];
 					current_location = current_location->down;
 				} else {
 					t_vs_r[i] = -1;
-					E_t_vs_r[i] = -1;
+					// E_t_vs_r[i] = -1;
 				}
 			}
 		}
@@ -2030,7 +1996,7 @@ int cluster_finding(llist* list_of_crystals, llist** cluster_1, llist** cluster_
  * Now uses the double_tree_stat_iteration method, moving some of the behavior 
  * done by find_endpoints_stat into double_tree_stat_iteration instead.
  */
-scatter** find_double_endpoints_stat(llist* detector_history, double sigma_per_scatter) {
+scatter** find_double_endpoints_stat(llist* detector_history, double sigma_per_scatter, double energy_cut, debug* diagnostics) {
 	if (detector_history == NULL) {
 		return NULL;
 	}
@@ -2105,33 +2071,15 @@ scatter** find_double_endpoints_stat(llist* detector_history, double sigma_per_s
 		}
 		return NULL;
 	}
-	// clear the alpha_n arrays
-	for (int i = 0; i < FIRST_N; i++) {
-		alpha_n_1[i] = -1;
-		alpha_n_2[i] = -1;
-	}
-	llist* current_loc1 = list_tail(scat_list1);
-	llist* current_loc2 = list_tail(scat_list2);
-	for (int i = 0; i < FIRST_N; i++) {
-		if ((current_loc1 != NULL) && (current_loc1->data != NULL)) {
-			n_eng_distro_n_1[i] = ((scatter*)(current_loc1->data))->deposit;
-			current_loc1 = current_loc1->up;
-		} else {
-			n_eng_distro_n_1[i] = -1;
-		}
-		if ((current_loc2 != NULL) && (current_loc2->data != NULL)) {
-			n_eng_distro_n_2[i] = ((scatter*)(current_loc2->data))->deposit;
-			current_loc2 = current_loc2->up;
-		} else {
-			n_eng_distro_n_2[i] = -1;
-		}
-	}
+
 	if (SCATTER_LIST_DEBUG) {
 		fprintf(debug_scatter_lists, "\nHistory %i:\n", ((event*)(detector_history->data))->number);
 	}
 
+	diagnostics->branch_scatters_1 = list_length(scat_list1);
+	diagnostics->branch_scatters_2 = list_length(scat_list2);
 	// run the actual finding of endpoint 1
-	scatter** endpoints = double_tree_stat_iteration(scat_list1, scat_list2, sigma_per_scatter);
+	scatter** endpoints = double_tree_stat_iteration(scat_list1, scat_list2, sigma_per_scatter, energy_cut, diagnostics);
 
 	scatter* endpoint1 = NULL;
 	scatter* endpoint2 = NULL;
@@ -2142,14 +2090,14 @@ scatter** find_double_endpoints_stat(llist* detector_history, double sigma_per_s
 	}
 	// if we failed just give the highest energy scatter. Leads to far more bad
 	// solutions but also doesn't leave anything on the table.
-	if (NEVER_CUT) {
-		if ((endpoint1 == NULL) && (scat_list1->data != NULL)) {
-			endpoint1 = scat_list1->data;
-		}
-		if ((endpoint2 == NULL) && (scat_list2->data != NULL)) {
-			endpoint2 = scat_list2->data;
-		}
-	}
+	// if (NEVER_CUT) {
+	// 	if ((endpoint1 == NULL) && (scat_list1->data != NULL)) {
+	// 		endpoint1 = scat_list1->data;
+	// 	}
+	// 	if ((endpoint2 == NULL) && (scat_list2->data != NULL)) {
+	// 		endpoint2 = scat_list2->data;
+	// 	}
+	// }
 
 
 	if ((endpoint1 == NULL) || (endpoint2 == NULL)) {
@@ -2200,32 +2148,6 @@ scatter** find_double_endpoints_stat(llist* detector_history, double sigma_per_s
 	return return_vals;
 }
 
-
-
-
-
-// /* 
-//  * first_scat_miss_transverse:
-//  * Takes the two endpoints and a 3-vector defining the location of the
-//  * annihilation and finds the distance between the line-of-responce and the
-//  * annihilation. If there is a problem (such as not having two endpoints) it
-//  * returns -1 as a reject value.
-//  */
-// double first_scat_miss_transverse(scatter** endpoints, vec3d* annh_loc) {
-// 	if ((endpoints == NULL) || (annh_loc == NULL)) {
-// 		return -1;
-// 	}
-// 	if ((endpoints[0] == NULL) || (endpoints[1] == NULL)) {
-// 		return -1;
-// 	}
-// 	// find the scattering point of the first scatter
-
-// 	vec3d* first_spot = vec_copy(endpoints[0]->loc);
-
-// 	vec3d* second_spot = vec_copy(endpoints[1]->loc);
-
-// 	return line_to_dot_dist(first_spot, second_spot, annh_loc);
-// }
 
 
 
@@ -2294,17 +2216,18 @@ int main(int argc, char **argv) {
 	// we are looking for an input histories file, an output file name,
 	// and an inner radius of the detector this may later be changed to
 	// input histories, input data file, output file name
-	if (argc < 4) {
-		printf("Unable to run. Expected at least 3 arguments got %i.\n", argc - 1);
+	int exit = 0;
+	if (argc < 5) {
+		printf("Unable to run. Expected at least 4 arguments got %i.\n", argc - 1);
 		printf("Expects an input detector volume ");
 		printf("history file, output file name,");
-		printf(" and FOM cutoff.\n");
+		printf(" FOM cutoff, and energy cut\n");
 		// printf("");
 		printf("Use a -h to get additional help information\n");
-		return 1;
+		exit = 1;
 	}
 	int binary = 0;
-	if (argc > 4) {
+	if (argc > 1) {
 		// go check all of the following flags!
 		for (int i = 1; i < argc; i++) {
 			if (!strcasecmp(argv[i], "-b")) {
@@ -2346,23 +2269,34 @@ int main(int argc, char **argv) {
 				run_time_rand = 0;
 				printf("Time randomness will not be applied\n");
 			}
+			if (!strcasecmp(argv[i], "-to")) {
+				// change application of time randomness
+				time_ordering = 1;
+				printf("Time ordering will be used\n");
+			}
 			if (!strcasecmp(argv[i], "-h")) {
 				printf("\nHelp information for reverse kinematics:\n");
-				printf("\tExpects 3 arguments, then optional flags. The three\n");
+				printf("\tExpects 4 arguments, then optional flags. The four\n");
 				printf("\targuments are:\n\t\t1) The DetectorTuple.pshp file containing ");
 				printf("the gamma\n\t\tand electron interactions from the detector volume\n");
 				printf("\t\t2) The location and name for the output files (file \n");
 				printf("\t\t extensions get added automatically)\n");
 				printf("\t\t3) The FOM per scatter, we have typically used 1.3\n");
+				printf("\t\t4) The energy cut (typically 0.1, giving +-10%%)\n");
 				printf("\tThese arguments can then be followed by optional flags:\n");
-				printf("\n\t-b -- sets code to expect tuple data in binary format\n");
+				printf("\n\t-b  -- sets code to expect tuple data in binary format\n");
 				printf("\n\t-E [value in keV] -- sets keV/switch for the run\n");
-				printf("\n\t-s [value in cm] -- sets spatial resolution for the run\n");
-				printf("\n\t-t [value in cm] -- sets 1 sigma timing resolution IN CM\n");
-				printf("\n\t-h\n\t-H -- display the help information\n");
-				printf("\n\t-d -- turns off applying time randomness. This is for use\n");
+				printf("\n\t-s [value in cm]  -- sets spatial resolution for the run\n");
+				printf("\n\t-t [value in cm]  -- sets 1 sigma timing resolution IN CM\n");
+				printf("\n\t-h or -H -- display the help information\n");
+				printf("\n\t-d  -- turns off applying time randomness. This is for use\n");
 				printf("\tin debugging, particularly understanding close misses\n");
+				printf("\n\t-to -- turns on time ordering in the FOM. This allows the FOM\n");
+				printf("\tto include the time of scatter in it's decision.\n");
 				printf("\t\n");
+				if (exit) {
+					return 1;
+				}
 			}
 		}
 	}
@@ -2379,7 +2313,7 @@ int main(int argc, char **argv) {
 	}
 	char* lor_file = (char*)malloc(sizeof(char) * (strlen(argv[2]) + 10));
 	char* debug_file = (char*)malloc(sizeof(char) * (strlen(argv[2]) + 10));
-	char* eng_file = (char*)malloc(sizeof(char) * (strlen(argv[2]) + 10));
+	// char* eng_file = (char*)malloc(sizeof(char) * (strlen(argv[2]) + 10));
 	char* true_file;
 	char* misID_file;
 	char* lead_file;
@@ -2391,7 +2325,7 @@ int main(int argc, char **argv) {
 
 	strcpy(debug_file, argv[2]);
 	strcpy(lor_file, argv[2]);
-	strcpy(eng_file, argv[2]);
+	// strcpy(eng_file, argv[2]);
 	if (LOR_GROUP) {
 		strcpy(true_file, argv[2]);
 		strcpy(misID_file, argv[2]);
@@ -2400,7 +2334,7 @@ int main(int argc, char **argv) {
 
 	debug_file = strcat(debug_file, ".debug");
 	lor_file = strcat(lor_file, ".lor");
-	eng_file = strcat(eng_file, ".eng");
+	// eng_file = strcat(eng_file, ".eng");
 	if (LOR_GROUP) {
 		true_file = strcat(true_file, ".true");
 		misID_file = strcat(misID_file, ".misID");
@@ -2409,14 +2343,14 @@ int main(int argc, char **argv) {
 
 	FILE* out_in_patient = fopen(debug_file, "w");
 	FILE* lor_output = fopen(lor_file, "w");
-	FILE* eng_output = fopen(eng_file, "w");
+	// FILE* eng_output = fopen(eng_file, "w");
 	FILE* true_out;
 	FILE* misID_out;
 	if (LOR_GROUP) {
 		true_out = fopen(true_file, "w");
 		misID_out = fopen(misID_file, "w");
 	}
-	if ((out_in_patient == NULL) || (lor_output == NULL) || (eng_output == NULL)) {
+	if ((out_in_patient == NULL) || (lor_output == NULL)) {// || (eng_output == NULL)) {
 		printf("Unable to open output file for writing\n");
 		return 1;
 	}
@@ -2435,7 +2369,8 @@ int main(int argc, char **argv) {
 	}
 
 	int run_in_patient = 1;
-	energy_cutoff = strtod(argv[3], NULL);
+	double fom_cutoff = strtod(argv[3], NULL);
+	double energy_cut = strtod(argv[4], NULL);
 	
 	if ((!test_expected_energy()) || (test_vec_to_phi() != 3) || (!test_factorial()) || (test_crystal_indicies())) {
 		fprintf(stderr, "tests failed, exiting\n");
@@ -2447,7 +2382,8 @@ int main(int argc, char **argv) {
 	fprintf(out_in_patient, "history number, in patient scatter occurance, ");
 	fprintf(out_in_patient, "scatters in branch 1, scatters in branch 2,");
 	fprintf(out_in_patient, "R1_1, R2_1, R3_1, R4_1, R5_1, ");
-	fprintf(out_in_patient, "R1_2, R2_2, R3_2, R4_2, R5_2, FOM 1, FOM 2, depth 1, depth 2\n");
+	fprintf(out_in_patient, "R1_2, R2_2, R3_2, R4_2, R5_2, FOM 1, FOM 2, depth 1, depth 2,");
+	fprintf(out_in_patient, " photoelectric 1?, photoelectric 2?, first two spacing 1, first two spacing 2\n");
 
 	llist *in_det_hist = NULL;
 	// llist *history = NULL;
@@ -2510,15 +2446,15 @@ int main(int argc, char **argv) {
 		} else {
 			missed_reconstruction_IPS_mask = 1;
 		}
-		branch_scatters_1 = 0;
-		branch_scatters_2 = 0;
+		debug diagnostic;
+		default_debug(&diagnostic);
 
-		scatter** endpoints = find_double_endpoints_stat(in_det_hist, energy_cutoff);
+		scatter** endpoints = find_double_endpoints_stat(in_det_hist, fom_cutoff, energy_cut, &diagnostic);
 		// scatter** endpoints = find_endpoints_stat(in_det_hist, energy_cutoff);
 
 		if (endpoints == NULL) {
-			fprintf(out_in_patient, "%i, ", branch_scatters_1); // trans miss
-			fprintf(out_in_patient, "%i, ", branch_scatters_2); // longi miss
+			fprintf(out_in_patient, "%i, ", diagnostic.branch_scatters_1); // scatters in branch 1
+			fprintf(out_in_patient, "%i, ", diagnostic.branch_scatters_2); // scatters in branch 2
 
 
 		} else {
@@ -2527,11 +2463,11 @@ int main(int argc, char **argv) {
 
 			// add the in patient scatters to the number T value for scatters
 			for (int i = 0; i < FIRST_N; i++) {
-				if (alpha_n_1[i] > 0) {
-					alpha_n_1[i] += (wasIPS & 0x1);
+				if (diagnostic.alpha_n_1[i] > 0) {
+					diagnostic.alpha_n_1[i] += (wasIPS & 0x1);
 				}
-				if (alpha_n_2[i] > 0) {
-					alpha_n_2[i] += !(!(wasIPS & 0x2));
+				if (diagnostic.alpha_n_2[i] > 0) {
+					diagnostic.alpha_n_2[i] += !(!(wasIPS & 0x2));
 				}
 			}
 
@@ -2543,7 +2479,7 @@ int main(int argc, char **argv) {
 				if (CUT_IPS && (wasIPS)) {
 					// we had an in patient scatter, so don't output the data
 				} else {
-					if ((alpha_n_1[0] == 1) && (alpha_n_2[0] == 1)) {
+					if ((diagnostic.alpha_n_1[0] == 1) && (diagnostic.alpha_n_2[0] == 1)) {
 						fprintf(true_out, "%i, ", ((event*)(in_det_hist->data))->number);
 						print_lor(true_out, result);
 						fprintf(true_out, "\n");
@@ -2569,39 +2505,24 @@ int main(int argc, char **argv) {
 
 		}
 		for (int i = 0; i < FIRST_N; i++) {
-			fprintf(out_in_patient, "%i, ", alpha_n_1[i]);
-			alpha_n_1[i] = -1;
+			fprintf(out_in_patient, "%i, ", diagnostic.alpha_n_1[i]);
 		} // alpha, beta ... of scatter set 1
 		for (int i = 0; i < FIRST_N; i++) {
-			fprintf(out_in_patient, "%i, ", alpha_n_2[i]);
-			alpha_n_2[i] = -1;
+			fprintf(out_in_patient, "%i, ", diagnostic.alpha_n_2[i]);
 		} // alpha, beta ... of scatter set 2
 		fprintf(out_in_patient, " %f, %f, ", first_FOM, second_FOM); 
 		first_FOM = -1;
 		second_FOM = -1;
 		// print the figure of merit of the two branches
-		fprintf(out_in_patient, "%i, %i\n", used_scatters_1, used_scatters_2);
+		fprintf(out_in_patient, "%i, %i, ", used_scatters_1, used_scatters_2);
 		// print the depth that the search went to for both
 		used_scatters_1 = -1;
 		used_scatters_2 = -1;
+		fprintf(out_in_patient, "%i, %i,", diagnostic.photoelectric_1, diagnostic.photoelectric_2);
+		fprintf(out_in_patient, " %f, %f\n", diagnostic.dist_1, diagnostic.dist_2);
 
-		for (int i = 0; i < FIRST_N; i++) {
-			fprintf(eng_output, "%f, ", alpha_eng_distro_n_1[i]);
-			alpha_eng_distro_n_1[i] = -1;
-		} // alpha, beta ... of scatter set 1
-		for (int i = 0; i < FIRST_N; i++) {
-			fprintf(eng_output, "%f, ", alpha_eng_distro_n_2[i]);
-			alpha_eng_distro_n_2[i] = -1;
-		} // alpha, beta ... of scatter set 2
-		for (int i = 0; i < FIRST_N; i++) {
-			fprintf(eng_output, "%f, ", n_eng_distro_n_1[i]);
-			n_eng_distro_n_1[i] = -1;
-		} // alpha, beta ... of scatter set 1
-		for (int i = 0; i < FIRST_N; i++) {
-			fprintf(eng_output, "%f, ", n_eng_distro_n_2[i]);
-			n_eng_distro_n_2[i] = -1;
-		} // alpha, beta ... of scatter set 2
-		fprintf(eng_output, " 0\n"); // ending character
+
+
 
 		if (endpoints != NULL) {
 			delete_scatter(endpoints[0]);
@@ -2609,19 +2530,6 @@ int main(int argc, char **argv) {
 			free(endpoints);
 		}
 
-		// } else {
-		// 	fprintf(out_in_patient, "%f, ", -1.); // trans miss
-		// 	fprintf(out_in_patient, "%f, ", -1.); // longi miss
-		// 	for (int i = 0; i < FIRST_N; i++) {
-		// 		fprintf(out_in_patient, "%i, ", -1);
-		// 		alpha_n_1[i] = -1;
-		// 	} // alpha, beta ... of scatter set 1
-		// 	for (int i = 0; i < FIRST_N; i++) {
-		// 		fprintf(out_in_patient, "%i, ", -1);
-		// 		alpha_n_2[i] = -1;
-		// 	} // alpha, beta ... of scatter set 2
-		// 	fprintf(out_in_patient, " 0\n"); // ending character
-		// }
 
 
 		fmap(in_det_hist, delete_event);
