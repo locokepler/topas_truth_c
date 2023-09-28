@@ -6,7 +6,6 @@
 #include <stdlib.h>
 #include "vector_ops.h"
 #include "lor.h"
-#include "ray_trace.h"
 
 #define ENG_RNG 0.001
 #define COMP_INT 1667457891
@@ -31,6 +30,7 @@
 #define CRYSTAL_HEIGHT 1.8
 #define CRYSTAL_Z_THICKNESS 0.276
 char time_ordering = 0;
+char cluster_energy_cut = 0;
 
 
 double time_uncert_cm = 3.82; // in cm for one sigma, NOT ps or ns FWHM 300ps = 3.82
@@ -75,9 +75,6 @@ int used_scatters_2 = -1;
 int correct_clustering = 0;
 int total_clustering = 0;
 
-float bore_position[3] = {0,0,0};
-float bore_dimentions[3] = {45, 200, 0};
-shape* detector_bore = NULL;
 
 typedef struct _crystal {
 	double energy;
@@ -544,19 +541,6 @@ int test_factorial() {
 	return 1;
 }
 
-// as copied from stack overflow
-float myErfInv2(float x){
-   float tt1, tt2, lnx, sgn;
-   sgn = (x < 0) ? -1.0f : 1.0f;
-
-   x = (1 - x)*(1 + x);        // x = 1 - x*x;
-   lnx = logf(x);
-
-   tt1 = 2/(PI*0.147) + 0.5f * lnx;
-   tt2 = 1/(0.147) * lnx;
-
-   return(sgn*sqrtf(-tt1 + sqrtf(tt1*tt1 - tt2)));
-}
 
 
 
@@ -716,653 +700,142 @@ double add_quadrature(double a, double b) {
 	return sqrt((a * a) + (b * b));
 }
 
-// using the partial derviative in b and theta computes the uncertanty in the
-// energy of the gamma going to b
-double expected_uncert_b(double b, double theta, double uncert_b, double uncert_theta) {
-	// if given bullshit uncertanties, say it
-	if ((uncert_b < 0) || (uncert_theta < 0)) {
-		return -1.;
-	}
-
-	// first partial derivative in theta
-	double numerator = 511. * b * sin(theta);
-	double one_less_theta = 1. - cos(theta);
-	double root = b * b + ((4. * 511. * b) / one_less_theta);
-	double denom = one_less_theta * one_less_theta * sqrt(root);
-	double theta_der = numerator / denom;
-	uncert_theta = uncert_theta * theta_der;
-
-	// now partial derivative in b
-	numerator = b + ((2. * 511.) / one_less_theta);
-	root = b * b + ((4. * 511. * b) / one_less_theta);
-	double first_term = numerator / sqrt(root);
-	double b_der = .5 * (first_term + 1.);
-	uncert_b = uncert_b * b_der;
-	if (GENERAL_DEBUG) {
-		printf("expected_uncert_b: b_der = %lf\n", b_der);
-		printf("expected_uncert_b: first_term = %lf\n", first_term);
-		printf("expected_uncert_b: energy uncertainty is %lf\n", uncert_b);
-		printf("expected_uncert_b: theta uncertainty is %lf\n", uncert_theta);
-	}
-
-	// double combined = 
-	// if (combined < 0) {
-	// 	fprintf(stderr, "expected_uncert_b: combined negative.\n\tHow did you get here?\n");
-	// 	fprintf(stderr, "\tcombined = %lf\n\tuncert_theta = %lf\n", combined, uncert_theta);
-	// 	fprintf(stderr, "\tuncert_b = %lf\n", uncert_b);
-	// }
-	return add_quadrature(uncert_theta, uncert_b);
+// selects a scatter randomly
+scatter* random_selection(scatter** cluster, int length) {
+    if (cluster == NULL) {
+        return NULL;
+    }
+    int index = rand() % length;
+    return cluster[index];
 }
 
-/* 
- * expected_energy_b
- * takes 3 scatters and solves the kinematics assuming that the gamma goes from
- * a->b->c, solving for the energy of the gamma from a->b. To do this it
- * calculates the angle <ABC, then uses the deposited energy at B and this angle
- * to determine the energy of the incoming gamma. 
+// selects scatter by the the highest energy
+scatter* energy_max_selection(scatter** cluster, int length) {
+    if (cluster == NULL) {
+        return NULL;
+    }
+    return cluster[0]; // cluster should be sorted by energy
+}
+
+// selects scatter by the the highest energy
+scatter* energy_min_selection(scatter** cluster, int length) {
+    if (cluster == NULL) {
+        return NULL;
+    }
+    return cluster[length - 1]; // cluster should be sorted by energy
+}
+
+scatter* time_selection(scatter** cluster, int length) {
+    if (cluster == NULL) {
+        return NULL;
+    }
+    int best_index = 0;
+    double best_time = cluster[0]->time;
+    for (int i = 1; i < length; i++) {
+        if (cluster[i]->time < best_time) {
+            best_index = i;
+            best_time = cluster[i]->time;
+        }
+    }
+    return cluster[best_index];
+}
+
+scatter* radius_selection(scatter** cluster, int length) {
+    if (cluster == NULL) {
+        return NULL;
+    }
+    int best_index = 0;
+    double closest = INFINITY;
+    for (int i = 0; i < length; i++) {
+        vec3d pos = cluster[i]->loc;
+        pos.z = 0;
+        double distance = vec_mag(pos);
+        if (distance < closest) {
+            best_index = i;
+            closest = distance;
+        }
+    }
+    return cluster[best_index];
+}
+
+
+/* single_cluster_call
+ * Takes a single cluster with more than one scatter and selects a single scatter as the "first". 
+ * It does not check that it has more than one scatter so that must be enforced outside of this
+ * function. The selection method is passed to this function. If cluster energy cuts are to be
+ * run then this function can return NULL in event the cluster fails the cut.
  */
- double expected_energy_b(scatter* a, scatter* b, scatter* c, double* uncert) {
-	 if ((a == NULL) || (b == NULL) || (c == NULL)) {
-		 return -1.;
-	 }
-
-	// first calculate the angle at b
-
-	// get the vector from b->a
-	vec3d ab = vec_sub(b->loc, a->loc);
-	// get the vector from b->c
-	vec3d bc = vec_sub(c->loc, b->loc);
-	// calculate the angle itself
-	double theta = vec_angle(ab, bc);
-
-	// calculate an estimate of uncertanty in theta
-	// done by sin(theta) = theta for small angles
-	double ab_uncert = add_quadrature(a->space_uncert, b->space_uncert);
-	double bc_uncert = add_quadrature(c->space_uncert, b->space_uncert);
-	ab_uncert = ab_uncert / vec_mag(ab);
-	bc_uncert = bc_uncert / vec_mag(bc);
-	double theta_uncert = add_quadrature(ab_uncert, bc_uncert);
-
-	if (1 - cos(theta) == 0.) {
-		// if this were the case things would break in division
-		return -1.; // we can't tell what energy the gamma had, so return easy
-		// to spot garbage
-	}
-
-
-	// calculate the incoming gamma energy. 
-	// The calculation is in the form of the quadradic formula. The first term
-	// calculated is -4ac
-	double last_term = 4 * ((b->deposit * 511.) / (1. - cos(theta)));
-	double determinator = (b->deposit * b->deposit) + last_term;
-	if (determinator < 0.) {
-		// we don't want to take the square root of a negative number,
-		// also it appears this scatter was non-physical. Honestly how did you
-		// get here? you added two (theoretically) positive numbers and got a
-		// negative one
-		return -1.;
-	}
-	double gamma_to_b_e = (b->deposit + sqrt(determinator)) / 2.; // the energy of the
-	// gamma from a to b
-
-	// now to calculate the uncertanty
-	if (uncert != NULL) {
-		double delta_e = expected_uncert_b(b->deposit, theta, b->eng_uncert, theta_uncert);
-		// add in a binding energy uncertainty:
-		if (delta_e < 0) {
-			fprintf(stderr, "expected_energy_b: uncertanty negative: %lf\n",delta_e);
-			uncert[0] = delta_e;
-		} else {
-			delta_e = add_quadrature(delta_e, BINDING_WIDTH);
-			uncert[0] = delta_e;
-		}
-	}
-
-	return gamma_to_b_e;
- }
-
-/* 
- * expected_energy_a
- * Takes three locations given as vec3 pointers. Energies are given as doubles.
- * The energies are assumed to be in keV.
- * The output is the estimated energy of the gamma before interacting at a.
- * This function is designed for use in hypothesis testing.
- * Method: First it computes the ange <ABC. Then, using the energy deposited by
- * the Compton scattering at B and the angle caused it calcuates the incoming
- * gamma's energy. The energy deposited at A is then added to the gamma energy
- * coming to B giving the energy of the incident gamma to A.
- */
-double expected_energy_a(scatter* a, scatter* b, scatter* c) {
-	double gamma_to_b_e = expected_energy_b(a, b, c, NULL);
-
-	if (gamma_to_b_e < 0) {
-		return gamma_to_b_e;
-		// covers error codes, all with negative energy returns. This includes
-		// if a is null, as then expected_energy_b cannot run, returns -1.
-	}
-
-	// now just add the energy of the gamma a->b and the energy deposited at a
-	return gamma_to_b_e + a->deposit;
-
-
-}
-
-/*
- * test_expected_energy
- * a test suite for the expected energy function to check that it is producing
- * the expected results.
- * Only has to test expected_energy_a, as expected_energy_b is used as the main
- * component of a.
- */
-int test_expected_energy() {
-	// test is a set of scatters with a known starting energy
-	// input is a 511. keV gamma, scatters with 10. keV deposit at A
-	// then scatters with an angle of 120 degrees at B, deposit 203.1654 keV
-	// then goes to C.
-	int pass = 1;
-
-	vec3d point_a = three_vec(0., 0., 0.);
-	vec3d point_b = three_vec(0., 3., 0);
-	vec3d point_c = three_vec(0., 2., 1.73205);
-	double deposit_a = 127.405;
-	double deposit_b = 203.1654;
-	scatter* scatter_a = new_scatter_old(point_a, deposit_a, -1);
-	scatter* scatter_b = new_scatter_old(point_b, deposit_b, -1);
-	scatter* scatter_c = new_scatter_old(point_c, 10., -1);
-	// run the function
-	double result = expected_energy_a(scatter_a, scatter_b, scatter_c);
-	delete_scatter(scatter_a);
-	delete_scatter(scatter_b);
-	delete_scatter(scatter_c);
-	if (double_equality(result, 511., 0.1)) {
-		printf("test_expected_energy passed test 1\n");
-	} else {
-		printf("test_expected_energy FAILED test 1:\n");
-		printf("expected energy %f, got energy %f.\n", 511., result);
-		pass = 0;
-	}
-
-
-	if (pass) {
-		printf("test_expected_energy: all test passed\n");
-		return 1;
-	}
-	printf("test_expected_energy: FAILED ONE OR MORE TESTS\n");
-	return 0;
-}
-
-/*
- * dist_probability:
- * Takes a pair of scatters from a detector and the predicted energy of the gamma
- * that went from one to the other. It then calculates the distance between the
- * scatters and using an approximation of the cross-section values for 
- */
-double dist_sigma(scatter* a, scatter* b, double energy) {
-	if ((a == NULL) || (b == NULL)) {
-		return -INFINITY; // very bad, and noticably meaningless result (it's negative)
-	}
-	// To handle a gamma that passes back through the bore of the detector, subtract the distance
-	// traveled through a cylinder with the inner radius of the detector.
-	// To determine the distance travled within the detector medium calculate the distance between
-	// the two scatters and then subtract the distance that ray travels inside the radius of the bore
-	vec3d outgoing = vec_sub(b->loc, a->loc);
-	double total_distance = vec_mag(outgoing);
-	double crossing_distance = total_distance;
-	// make a ray from loc to remaining
-	// check the direction that the ray would have. If it is not inward we do not need to raytrace
-	// dot the vector pointing from the center with the direction vector
-	if (vec_dot(three_vec(outgoing.x, outgoing.y, 0), three_vec(a->loc.x, a->loc.y, 0)) < 0.0) {
-		vec3d outgoing_unit = vec_scaler(outgoing, 1.0/total_distance);
-		ray* outgoing_ray = ray_build(a->loc, outgoing_unit);
-		traversal* bore_distance = exit_cyl(outgoing_ray, detector_bore, NULL);
-		if (bore_distance != NULL) {
-			crossing_distance += bore_distance->t;
-			traversal_free(bore_distance);
-		}
-		ray_free(outgoing_ray);
-	}
-	// whats the probability this happened?
-	// requires the interaction cross section of the material at various energies
-	double cross_sections[10] = {0.166, 0.142, 0.128, 0.118, 0.109, 0.102, 0.096, 0.092, 0.088, 0.083};
-	double energy_cross_section;
-	if (energy < 50.0) {
-		energy_cross_section = cross_sections[0];
-	} else if (energy > 500.0) {
-		energy_cross_section = cross_sections[9];
-	} else {
-		energy_cross_section = cross_sections[(int)round(energy / 50.0) - 1];
-	}
-	double probability = exp(-fabs(crossing_distance) * energy_cross_section); // distance / (1/e distance)
-	// printf("distance: %lf,\t cross section: %lf, \t exponent = %lf\n",crossing_distance, energy_cross_section, -fabs(crossing_distance) * energy_cross_section);
-	double sigma = myErfInv2(1.0 - probability);
-	// printf("Prob: %lf, \t sigma %lf\n", probability, sigma);
-	return sigma;
-}
-
-
-
-
-/* build_array_no_i:
- * takes an array of scatters of length source_len and returns a copy of the
- * array without the element that was at location i in the source array.
- */
-scatter** build_array_no_i(scatter** source, uint source_len, uint i) {
-	if ((source == NULL) || (source_len <= 1)) {
-		return NULL;
-	}
-	scatter** result = (scatter**)malloc(sizeof(scatter*) * (source_len - 1));
-	for (int j = 0; j < source_len - 1; j++) {
-		if (j < i) {
-			result[j] = source[j];
-		} else {
-			result[j] = source[j+1];
-		}
-	}
-	return result;
-}
-
-double recursive_search(double best, double current, double inc_eng, double inc_uncert, scatter* origin, scatter* loc, scatter** remaining, uint remain_count, llist** path) {
-	if ((loc == NULL) || (remaining == NULL) || (origin == NULL) || (remain_count <= SKIP)) {
-		if (TREE_DEBUG) {
-			printf("recursive_search: end of branch\n");
-		}
-		if (GRAPHVIZ_DEBUG) {
-			fprintf(debug_graphs, "%u;\n", graph_id);
-			fprintf(debug_graphs, "%u [label=\"end of check\"];\n", graph_id);
-			graph_id++;
-		}
-		if (path != NULL) {
-			float* best_N_return = (float*)malloc(sizeof(float) * 2);
-			if (origin->truth != NULL) {
-				best_N_return[0] = loc->truth->true_n;
-				best_N_return[1] = loc->truth->true_eng;
-			} else {
-				best_N_return[0] = -1;
-				best_N_return[1] = -1;
-			}
-			path[0] = add_to_top(NULL, best_N_return);
-		}
-		return current;
-	}
-	if (best < current) {
-		// the best find is better than our current find, we are not doing well
-		if (TREE_DEBUG) {
-			printf("recursive_search: best better than current\n");
-		}
-		return current;
-	}
-
-	double OUT_OF_PLANE_WEIGHT = 0.; // how many sigma a 90 deg out of plane
-	// scatter counts for 
-	if (TREE_DEBUG) {
-		printf("recursive_search: Origin N = ");
-		if (origin->truth != NULL) {
-			printf("%i, N = ", origin->truth->true_n);
-		} else {
-			printf("MISSING, N = ");
-		}
-		if (loc->truth != NULL) {
-			printf("%i, ", loc->truth->true_n);
-		} else {
-			printf("MISSING, ");
-		}
-		printf("best = %lf, current = %lf\n", best, current);
-	}
-	uint graph_label;
-	if (GRAPHVIZ_DEBUG && (loc->truth != NULL)) {
-		fprintf(debug_graphs, "%u;\n", graph_id);
-		fprintf(debug_graphs, "%u [label=\"N=%i\\nbest=%lf\\ncur=%lf\\neng=%lf keV\"];\n",graph_id, loc->truth->true_n,best,current, loc->deposit);
-		graph_label = graph_id;
-		graph_id++;
-	}
-
-	double energy_uncert = -1;
-	vec3d in = vec_sub(origin->loc, loc->loc);
-
-	double better_find = INFINITY;
-
-	// begin N vs alpha work
-	llist* continuing_path = NULL;
-	llist* best_path = NULL;
-	// end N vs alpha work
-
-	for (int i = 0; i < remain_count; i++) {
-		// first calcuate the probability of our current deviation
-		double prediction = expected_energy_b(origin, loc, remaining[i], &energy_uncert);
-		if (prediction < 0) {
-			// we need to skip the work on this because there is no viable prediction
-		} else {
-			if (energy_uncert < 0) {
-				fprintf(stderr, "recursive_search: negative energy error found (%lf). Check given scatter errors\n",energy_uncert);
-				fprintf(stderr, "\terror thrown on history %i\n", hist_num);
-			}
-			// calculate the combined error of the incoming energy and expectation
-			double comb_uncert = add_quadrature(inc_uncert, energy_uncert);
-			double energy_error = fabs(inc_eng - prediction) / comb_uncert; // error between
-			// double new_energy = inc_eng - loc->deposit; // could maybe be the value
-			// of expectation - loc->deposit
-			double new_energy = inc_eng - loc->deposit;
-			double new_eng_uncert = add_quadrature(inc_uncert, loc->eng_uncert);
-			// the a->b gamma prediction and the value from earlier in the chain
-			double step_error = energy_error;
-			if ((step_error + current < best) && (step_error < MAX_SINGLE_FOM) && USE_SCATTER_DISTANCE) {
-				// no sense in checking other constraints if we already fail
-				// find the error based on the distance traveled between the two interaction locations
-				double dist_error = dist_sigma(loc, remaining[i], prediction);
-				step_error = add_quadrature(step_error, dist_error);
-			}
-
-			// now find the error in electron direction plane
-			if (loc->has_dir) {
-				// only do this if there is a point. No electron direction then you
-				// can't check if it is in the plane.
-
-				vec3d outgoing = vec_sub(loc->loc, remaining[i]->loc);
-				// direction heading out from the current location to the next location
-				vec3d scatter_plane_normal = vec_cross(in, outgoing);
-				// creates a normal to the plane of the scattering origin->loc->i
-				vec3d plane_norm_hat = vec_norm(scatter_plane_normal);
-				// normalizes the plane perpendicular
-				double out_of_plane = vec_dot(plane_norm_hat, loc->dir);
-				// has the value of cosine of the angle between the plane normal and the
-				// direction of the electron. This means that for perfect in the plane
-				// behavior the value is 0, out of the plane +- 1.
-				step_error = add_quadrature(step_error, abs(out_of_plane * OUT_OF_PLANE_WEIGHT));
-			}
-			if (time_ordering) {
-				// we are allowed to do time ordering, so check how much later origin was than loc.
-				// the amount later / uncertainty is the size of the error. If origin was earlier than
-				// loc as would be expected we have zero error. It's not a perfect description but it
-				// gets rid of very bad answers
-				if (origin->time > loc->time) {
-					double difference = origin->time - loc->time;
-					step_error = add_quadrature(step_error, difference * SPD_LGHT / add_quadrature(origin->time_uncert, loc->time_uncert));
-				}
-			}
-			// done calcuating what the current paths uncertanty is, lets combine it
-			// with the current uncertanty to check if we are worse than the best
-			// solution so far.
-			// double combined_error = add_quadrature(step_error, current);
-			double combined_error = step_error + current;
-			uint part_graph_id;
-			if(GRAPHVIZ_DEBUG && (remaining[i]->truth != NULL)) {
-				fprintf(debug_graphs, "\t%u -> %u;\n", graph_label, graph_id);
-				fprintf(debug_graphs, "\t%u [label=\"N=%i\\ntry=%lf\"];\n", graph_id, remaining[i]->truth->true_n, combined_error);
-				part_graph_id = graph_id;
-				graph_id++;
-			}
-			if (TREE_DEBUG) {
-				printf("\tstep error: %lf, \tcombined error: %lf\n", step_error, combined_error);
-			}
-
-
-			if ((combined_error < best) && (step_error < MAX_SINGLE_FOM)) {
-				// time to go one layer further
-				scatter** new_array = build_array_no_i(remaining, remain_count, i);
-				// continuing_path = NULL;
-
-				if (GRAPHVIZ_DEBUG) {
-					fprintf(debug_graphs, "%u -> ", part_graph_id);
-				}
-
-				double below = recursive_search(best, combined_error, new_energy, new_eng_uncert, loc, remaining[i], new_array, remain_count - 1, &continuing_path);
-
-				// if (GRAPHVIZ_DEBUG) {
-				// 	fprintf(debug_graphs, "} %u -> {", graph_label);
-				// }
-
-				free(new_array);
-				if (below < better_find) {
-					// we found a better result
-					better_find = below;
-					if (below < best) {
-						best = below;
-					}
-
-					// begin N vs alpha work
-					if (best_path != NULL) {
-						fmap(best_path, free_null);
-						delete_list(best_path);
-						best_path = NULL;
-					}
-					best_path = continuing_path;
-					continuing_path = NULL;
-				} else {
-					fmap(continuing_path, free_null);
-					delete_list(continuing_path);
-					continuing_path = NULL;
-				}
-			}
-		}
-	}
-	// if (TREE_DEBUG) {
-	// 	printf("recursive_search: best next found N = %i\n",best_find_N);
-	// }
-	if (path != NULL) {
-		float* best_N_return = (float*)malloc(sizeof(float) * 2);
-		// this seems like it should be loc->truth
-		// however, the list is misbehaving for the first call
-		if (origin->truth != NULL) {
-			best_N_return[0] = loc->truth->true_n;
-			best_N_return[1] = loc->truth->true_eng;
-		} else {
-			best_N_return[0] = -1;
-			best_N_return[1] = -1;
-		}
-		path[0] = add_to_top(best_path, best_N_return);
-	}
-	// if (GRAPHVIZ_DEBUG) {
-	// 	fprintf(debug_graphs, "}");
-	// }
-	if (better_find == INFINITY) {
-		better_find = best;
-	}
-
-	return better_find;
-}
-
-
-scatter* multi_gamma_stat_iteration(llist* history_near, llist* history_far, double sigma_per_scatter, int* best_find_array) {
-	if ((history_near == NULL) || (history_far == NULL)) {
-		return NULL;
-	}
-	// for each in history near, choose a history far and run the recursive search.
-	// hang onto the best result after each point
-
-
-	scatter* best_scatter = NULL;
-
-	int len_hist_near = list_length(history_near);
-	int len_hist_far = list_length(history_far);
-
-	if (len_hist_near < 2) {
-		// history1 is too short to run the recursion process.
-		if (KEEP_SINGLES && len_hist_near == 1) {
-			// we have a single case
-			return history_near->data;
-		}
-		return NULL;
-	}
-	if (len_hist_far < 1) {
-		// idk if it is possible to even get here, but we can't continue if we do
-		return NULL;
-	}
-	// lets check the trigger: The two scatter lists must trigger at least two
-	// different modules in phi
-	int near_module = 0;
-	llist* location = list_tail(history_near);
-	while ((near_module == 0) && (location != NULL) && (location->data != NULL)) {
-		near_module = phi_trigger((scatter*)(location->data), PHI_MODULES);
-		location = location->up;
-	}
-	location = history_far;
-	int far_module = 0;
-	while ((far_module == 0) && (location != NULL) && (location->data != NULL)) {
-		int temp = phi_trigger((scatter*)(location->data), PHI_MODULES);
-		if ((abs(temp - near_module) > MODULE_SEPERATION) && (abs(temp - near_module) < (PHI_MODULES - MODULE_SEPERATION))) {
-			far_module = temp;
-		}
-		location = location->down;
-	}
-	if (far_module == 0) {
-		return NULL;
-	}
-
-	possible_branches += len_hist_far * factorial(len_hist_near);
-
-	llist* hist_near_bottom = list_tail(history_near);
+scatter* single_cluster_call(llist* cluster, double energy_cut, debug* diagnostic, int index_cluster, scatter* (*selection_method)(scatter**, int)) {
+    if (cluster == NULL) {
+        return NULL;
+    }
+	llist* cluster_bottom = list_tail(cluster);
+    int len_cluster = list_length(cluster);
 	// time to turn the scattering list into an array for fast access
-	scatter** scatters_near = (scatter**)malloc(len_hist_near * sizeof(scatter*));
-	for (int i = 0; i < len_hist_near; i++)	{
-		scatters_near[i] = (scatter*)hist_near_bottom->data;
-		if (TREE_DEBUG) {
-			printf("mgsi: near scatter %i, N = ", i);
-			if (scatters_near[i]->truth != NULL) {
-				printf("%i, ", scatters_near[i]->truth->true_n);
-				printf("deposit = %lf keV\n", scatters_near[i]->deposit);
-			}
-			}
-		hist_near_bottom = hist_near_bottom->up;
+	scatter** scatters = (scatter**)malloc(len_cluster * sizeof(scatter*));
+	for (int i = 0; i < len_cluster; i++)	{
+		scatters[i] = (scatter*)cluster_bottom->data;
+		cluster_bottom = cluster_bottom->up;
 	}
+    if (diagnostic != NULL) {
+        if (index_cluster == 0) {
+            diagnostic->dist_1 = vec_dist(scatters[0]->loc, scatters[1]->loc);
+        } else {
+            diagnostic->dist_2 = vec_dist(scatters[0]->loc, scatters[1]->loc);
+        }
+    }
+	scatter_quicksort(scatters, 0, len_cluster - 1);
 
-	llist* hist_far_bottom = list_tail(history_far);
-	scatter** scatters_far = (scatter**)malloc(len_hist_far * sizeof(scatter*));
-	for (int i = 0; i < len_hist_far; i++)	{
-		scatters_far[i] = (scatter*)hist_far_bottom->data;
-		hist_far_bottom = hist_far_bottom->up;
-	}
-
-	scatter_quicksort(scatters_near, 0, len_hist_near - 1);
-	scatter_quicksort(scatters_far, 0, len_hist_far - 1);
-	if (GENERAL_DEBUG) {
-		printf("multi_gamma_stat_iteration: scatters sorted:\n");
-		for (int i = 0; i < len_hist_near; i++) {
-			printf("\t%lf\n", scatters_near[i]->deposit);
-		}
-		printf("\n");
-	}
-
-	// sorts the scatters by deposit energy, now only keep the largest LARGEST
-	scatter** scatters_near_short = (scatter**)malloc((LARGEST + SKIP) * sizeof(scatter*));
-	scatter** scatters_far_short = (scatter**)malloc((LARGEST + SKIP) * sizeof(scatter*));
-	for (int i = 0; i < LARGEST + SKIP; i++) {
-		if (i >= len_hist_near) {
-			scatters_near_short[i] = NULL;
-		} else {
-			scatters_near_short[i] = scatters_near[i];
-			if (TREE_DEBUG) {
-				printf("mgsi: near scatter short %i, N = ", i);
-				if (scatters_near[i]->truth != NULL) {
-					printf("%i\n", scatters_near[i]->truth->true_n);
-				}
-			}
-		}
-		if (i >= len_hist_far) {
-			scatters_far_short[i] = NULL;
-		} else {
-			scatters_far_short[i] = scatters_far[i];
-		}
-	}
-	if (len_hist_near > LARGEST + SKIP) {
-		len_hist_near = LARGEST + SKIP;
-	}
-	if (len_hist_far > LARGEST + SKIP) {
-		len_hist_far = LARGEST + SKIP;
-	}
-
-	double best_find = sigma_per_scatter * (len_hist_near - SKIP);
-
-	if (SCATTER_LIST_DEBUG) {
-		fprintf(debug_scatter_lists, "First gamma scatters:\n");
+    if (SCATTER_LIST_DEBUG) {
+        if (index_cluster == 0) {
+            fprintf(debug_scatter_lists, "First ");
+        } else {
+            fprintf(debug_scatter_lists, "Second ");
+        }
+		fprintf(debug_scatter_lists, "gamma scatters:\n");
 		fprintf(debug_scatter_lists, "\tenergy order | true N |  true eng  | measured eng |      x      |      y      |      z      |\n");
-		for (int i = 0; i < len_hist_near; i++) {
-			if (scatters_near_short[i]->truth != NULL) {
-				fprintf(debug_scatter_lists, "\t%12i | %6i | %10f | %12f |", i, scatters_near_short[i]->truth->true_n, scatters_near_short[i]->truth->true_eng, scatters_near_short[i]->deposit);
-				fprintf(debug_scatter_lists, " %11f | %11f | %11f |\n", scatters_near_short[i]->loc.x, scatters_near_short[i]->loc.y, scatters_near_short[i]->loc.z);
-			}
-		}
-		fprintf(debug_scatter_lists, "Second gamma scatters:\n");
-		fprintf(debug_scatter_lists, "\tenergy order | true N |  true eng  | measured eng |      x      |      y      |      z      |\n");
-		for (int i = 0; i < len_hist_far; i++) {
-			if (scatters_far_short[i]->truth != NULL) {
-				fprintf(debug_scatter_lists, "\t%12i | %6i | %10f | %12f |", i, scatters_far_short[i]->truth->true_n, scatters_far_short[i]->truth->true_eng, scatters_far_short[i]->deposit);
-				fprintf(debug_scatter_lists, " %11f | %11f | %11f |\n", scatters_far_short[i]->loc.x, scatters_far_short[i]->loc.y, scatters_far_short[i]->loc.z);
+		for (int i = 0; i < len_cluster; i++) {
+			if (scatters[i]->truth != NULL) {
+				fprintf(debug_scatter_lists, "\t%12i | %6i | %10f | %12f |", i, scatters[i]->truth->true_n, scatters[i]->truth->true_eng, scatters[i]->deposit);
+				fprintf(debug_scatter_lists, " %11f | %11f | %11f |\n", scatters[i]->loc.x, scatters[i]->loc.y, scatters[i]->loc.z);
 			}
 		}
 	}
 
-	llist* best_found_path = NULL;
+    // if cluster energy cut is set check to see if we should reject this instance.
+    if (cluster_energy_cut) {
+        double total_energy = 0;
+        for (int i = 0; i < len_cluster; i++) {
+            total_energy += scatters[i]->deposit;
+        }
+        if (fabs(total_energy - ELECTRON_MASS) > energy_cut * ELECTRON_MASS) {
+            free(scatters);
+            return NULL;
+        }
+    }
 
-	for (int j = 0; j < len_hist_near; j++) {
-
-		scatter** new_array = build_array_no_i(scatters_near_short, len_hist_near, j);
-
-		for (int i = 0; i < len_hist_far; i++) {
-			llist* path = NULL;
-
-			if (GRAPHVIZ_DEBUG) {
-				fprintf(debug_graphs, "\n\ndigraph %u%i%i {\n", hist_num, i, j);
-				graph_id = 0;
-			}
-
-			double try = recursive_search(best_find, 0., 511., 0., scatters_far_short[i], scatters_near_short[j], new_array, len_hist_near - 1, &path);
-			if (GRAPHVIZ_DEBUG) {
-				fprintf(debug_graphs, "}\n");
-			}
-			if (try < best_find) {
-				best_scatter = scatters_near_short[j];
-				best_find = try;
-				if (best_found_path != NULL) {
-					fmap(best_found_path, free_null);
-					delete_list(best_found_path);
-				}
-				best_found_path = path;
-			} else {
-				fmap(path, free_null);
-				delete_list(path);
-			}
-		}
-		free(new_array);
-	}
-
-	// move the path into the array of N vs alpha, beta, etc.
-	llist* current_location = list_head(best_found_path);
-	if (best_scatter == NULL) {
-
-	} else if (best_find_array != NULL) {
-		for (int i = 0; i < FIRST_N; i++) {
-			if (current_location != NULL) {
-				best_find_array[i] = (int)(((float*)(current_location->data))[0]);
-				current_location = current_location->down;
-			} else {
-				best_find_array[i] = -1;
-			}
-		}
-	}
-	fmap(best_found_path, free_null);
-	delete_list(best_found_path);
-
-
-	free(scatters_near);
-	free(scatters_far);
-	free(scatters_near_short);
-	free(scatters_far_short);
-
-
-	return best_scatter;
+    scatter* chosen = selection_method(scatters, len_cluster);
+    free(scatters);
+    if ((diagnostic != NULL) && (chosen != NULL) && (chosen->truth != NULL)) {
+        if (index_cluster == 0) {
+            diagnostic->alpha_n_1[0] = chosen->truth->true_n;
+        } else {
+            diagnostic->alpha_n_2[0] = chosen->truth->true_n;
+        }
+    }
+    return chosen;
 
 }
 
-/* double_tree_stat_iteration
- * Takes a pair of histories and sigma per scatter and finds the best solution
- * using both trees. For each i,j, the two arrays of scatters are iterated over.
- * Starting with path j->i with i as the first scatter location a FOM is calculated
- * by recursive_search. If this FOM passes the test then the second tree is searched.
- * If that FOM also passes the test then the two FOMs are combined. This combination
- * is then minimized
+
+/* double_histories_search
+ * Takes a pair of clusters and an energy cut and finds the a single LOR solution
+ * using both trees. If one or more history has only a single scatter then it checks 
+ * that against the energy cut to see if it can be accepted as a photoelectric interaction.
+ * For clusters with more than one scatter the given method is used for choosing a scatter.
  */
-scatter** double_tree_stat_iteration(llist* history_1, llist* history_2, double sigma_per_scatter, double energy_cut, debug* diagnostic) {
-	if ((history_1 == NULL) || (history_2 == NULL)) {
+scatter** double_histories_search(llist* cluster_1, llist* cluster_2, double energy_cut, scatter* (*selection_method)(scatter**, int), debug* diagnostic) {
+	if ((cluster_1 == NULL) || (cluster_2 == NULL)) {
 		return NULL;
 	}
 	diagnostic->photoelectric_1 = 0;
@@ -1371,279 +844,47 @@ scatter** double_tree_stat_iteration(llist* history_1, llist* history_2, double 
 	// for each in history near, choose a history far and run the recursive search.
 	// hang onto the best result after each point
 
-	scatter* best_scatter_1 = NULL;
-	scatter* best_scatter_2 = NULL;
+    scatter** endpoints = (scatter**)calloc(2, sizeof(scatter*));
 
-	int len_hist_1 = list_length(history_1);
-	int len_hist_2 = list_length(history_2);
+	int len_cluster_1 = list_length(cluster_1);
+	int len_cluster_2 = list_length(cluster_2);
 
-	if ((len_hist_1 < 2) || (len_hist_2 < 2)) {
+	if ((len_cluster_1 < 2) || (len_cluster_2 < 2)) {
 		// behavior for keeping singles goes here. If we are to keep singles
 		// we should return the single from any of these that have a single
 		// scatter, and run the tree search on any others
-		scatter** endpoints = (scatter**)calloc(2, sizeof(scatter*));
-		if (len_hist_1 == 1) {
+		if (len_cluster_1 == 1) {
 			// hist 1 has a single scatter
-			if (fabs(((scatter*)(history_1->data))->deposit - ELECTRON_MASS) < (energy_cut * ELECTRON_MASS)) {
-				endpoints[0] = ((scatter*)(history_1->data));
-				diagnostic->alpha_n_1[0] = ((scatter*)(history_1->data))->truth ->true_n;
+			if (fabs(((scatter*)(cluster_1->data))->deposit - ELECTRON_MASS) < (energy_cut * ELECTRON_MASS)) {
+				endpoints[0] = ((scatter*)(cluster_1->data));
+				diagnostic->alpha_n_1[0] = ((scatter*)(cluster_1->data))->truth ->true_n;
 				diagnostic->photoelectric_1 = 1;
 			}
 		}
-		if (len_hist_2 == 1) {
-			if (fabs(((scatter*)(history_2->data))->deposit - ELECTRON_MASS) < (energy_cut * ELECTRON_MASS)) {
-				endpoints[1] = ((scatter*)(history_2->data));
-				diagnostic->alpha_n_2[0] = ((scatter*)(history_2->data))->truth ->true_n;
+		if (len_cluster_2 == 1) {
+			if (fabs(((scatter*)(cluster_2->data))->deposit - ELECTRON_MASS) < (energy_cut * ELECTRON_MASS)) {
+				endpoints[1] = ((scatter*)(cluster_2->data));
+				diagnostic->alpha_n_2[0] = ((scatter*)(cluster_2->data))->truth ->true_n;
 				diagnostic->photoelectric_2 = 1;
 			}
 		}
-		if ((endpoints[0] == NULL) && (len_hist_1 > 1)) {
-			endpoints[0] = multi_gamma_stat_iteration(history_1, history_2, sigma_per_scatter, diagnostic->alpha_n_1);
-		}
-		if ((endpoints[1] == NULL) && (len_hist_2 > 1)) {
-			endpoints[1] = multi_gamma_stat_iteration(history_2, history_1, sigma_per_scatter, diagnostic->alpha_n_1);
-		}
-		return endpoints;
+        if ((endpoints[0] != NULL) && (endpoints[1] != NULL)) {
+		    return endpoints;
+        }
 	}
 
-	double best_find_1 = sigma_per_scatter * (len_hist_1 - SKIP);
-	double best_find_2 = sigma_per_scatter * (len_hist_2 - SKIP);
+    if ((endpoints[0] == NULL) && (len_cluster_1 > 1)) {
+        endpoints[0] = single_cluster_call(cluster_1, energy_cut, diagnostic, 0, selection_method);
+    }
+    if ((endpoints[1] == NULL) && (len_cluster_2 > 1)) {
+        endpoints[1] = single_cluster_call(cluster_2, energy_cut, diagnostic, 1, selection_method);
+    }
+    if ((endpoints[0] == NULL) || (endpoints[1] == NULL)) {
+        free(endpoints);
+        return NULL;
+    }
 
-	used_scatters_1 = (len_hist_1 - SKIP);
-	used_scatters_2 = (len_hist_2 - SKIP);
-
-	// lets check the trigger: The two scatter lists must trigger at least two
-	// different modules in phi
-	int near_module = 0;
-	llist* location = list_tail(history_1);
-	while ((near_module == 0) && (location != NULL) && (location->data != NULL)) {
-		near_module = phi_trigger((scatter*)(location->data), PHI_MODULES);
-		location = location->up;
-	}
-	location = history_2;
-	int far_module = 0;
-	while ((far_module == 0) && (location != NULL) && (location->data != NULL)) {
-		int temp = phi_trigger((scatter*)(location->data), PHI_MODULES);
-		if ((abs(temp - near_module) > MODULE_SEPERATION) && (abs(temp - near_module) < (PHI_MODULES - MODULE_SEPERATION))) {
-			far_module = temp;
-		}
-		location = location->down;
-	}
-	if (far_module == 0) {
-		return NULL;
-	}
-
-	possible_branches += len_hist_2 * factorial(len_hist_1);
-	possible_branches += len_hist_1 * factorial(len_hist_2);
-
-	llist* hist_1_bottom = list_tail(history_1);
-	// time to turn the scattering list into an array for fast access
-	scatter** scatters_1 = (scatter**)malloc(len_hist_1 * sizeof(scatter*));
-	for (int i = 0; i < len_hist_1; i++)	{
-		scatters_1[i] = (scatter*)hist_1_bottom->data;
-		if (TREE_DEBUG) {
-			printf("dtsi: near scatter %i, N = ", i);
-			if (scatters_1[i]->truth != NULL) {
-				printf("%i, ", scatters_1[i]->truth->true_n);
-				printf("deposit = %lf keV\n", scatters_1[i]->deposit);
-			}
-			}
-		hist_1_bottom = hist_1_bottom->up;
-	}
-
-	llist* hist_2_bottom = list_tail(history_2);
-	scatter** scatters_2 = (scatter**)malloc(len_hist_2 * sizeof(scatter*));
-	for (int i = 0; i < len_hist_2; i++)	{
-		scatters_2[i] = (scatter*)hist_2_bottom->data;
-		hist_2_bottom = hist_2_bottom->up;
-	}
-
-	scatter_quicksort(scatters_1, 0, len_hist_1 - 1);
-	scatter_quicksort(scatters_2, 0, len_hist_2 - 1);
-	if (GENERAL_DEBUG) {
-		printf("double_tree_stat_iteration: scatters sorted:\n");
-		for (int i = 0; i < len_hist_1; i++) {
-			printf("\t%lf\n", scatters_1[i]->deposit);
-		}
-		printf("\n");
-	}
-
-	// sorts the scatters by deposit energy, now only keep the largest LARGEST
-	scatter** scatters_1_short = (scatter**)malloc((LARGEST + SKIP) * sizeof(scatter*));
-	scatter** scatters_2_short = (scatter**)malloc((LARGEST + SKIP) * sizeof(scatter*));
-	for (int i = 0; i < LARGEST + SKIP; i++) {
-		if (i >= len_hist_1) {
-			scatters_1_short[i] = NULL;
-		} else {
-			scatters_1_short[i] = scatters_1[i];
-			if (TREE_DEBUG) {
-				printf("dtsi: near scatter short %i, N = ", i);
-				if (scatters_1[i]->truth != NULL) {
-					printf("%i\n", scatters_1[i]->truth->true_n);
-				}
-			}
-		}
-		if (i >= len_hist_2) {
-			scatters_2_short[i] = NULL;
-		} else {
-			scatters_2_short[i] = scatters_2[i];
-		}
-	}
-	if (len_hist_1 > LARGEST + SKIP) {
-		len_hist_1 = LARGEST + SKIP;
-	}
-	if (len_hist_2 > LARGEST + SKIP) {
-		len_hist_2 = LARGEST + SKIP;
-	}
-	if (diagnostic != NULL) {
-		// determine the distance between the first two scatters of each scatter list
-		diagnostic->dist_1 = vec_dist(scatters_1_short[0]->loc, scatters_1_short[1]->loc);
-		diagnostic->dist_2 = vec_dist(scatters_2_short[0]->loc, scatters_2_short[1]->loc);
-	}
-
-
-	if (SCATTER_LIST_DEBUG) {
-		fprintf(debug_scatter_lists, "First gamma scatters:\n");
-		fprintf(debug_scatter_lists, "\tenergy order | true N |  true eng  | measured eng |      x      |      y      |      z      |\n");
-		for (int i = 0; i < len_hist_1; i++) {
-			if (scatters_1_short[i]->truth != NULL) {
-				fprintf(debug_scatter_lists, "\t%12i | %6i | %10f | %12f |", i, scatters_1_short[i]->truth->true_n, scatters_1_short[i]->truth->true_eng, scatters_1_short[i]->deposit);
-				fprintf(debug_scatter_lists, " %11f | %11f | %11f |\n", scatters_1_short[i]->loc.x, scatters_1_short[i]->loc.y, scatters_1_short[i]->loc.z);
-			}
-		}
-		fprintf(debug_scatter_lists, "Second gamma scatters:\n");
-		fprintf(debug_scatter_lists, "\tenergy order | true N |  true eng  | measured eng |      x      |      y      |      z      |\n");
-		for (int i = 0; i < len_hist_2; i++) {
-			if (scatters_2_short[i]->truth != NULL) {
-				fprintf(debug_scatter_lists, "\t%12i | %6i | %10f | %12f |", i, scatters_2_short[i]->truth->true_n, scatters_2_short[i]->truth->true_eng, scatters_2_short[i]->deposit);
-				fprintf(debug_scatter_lists, " %11f | %11f | %11f |\n", scatters_2_short[i]->loc.x, scatters_2_short[i]->loc.y, scatters_2_short[i]->loc.z);
-			}
-		}
-	}
-
-
-
-	llist* best_found_path_1 = NULL;
-	llist* best_found_path_2 = NULL;
-	double best_combination = best_find_1 + best_find_2;
-
-	for (int j = 0; j < len_hist_1; j++) {
-
-		scatter** new_array_1 = build_array_no_i(scatters_1_short, len_hist_1, j);
-
-		double reduced_second_FOM = best_find_2;
-
-		for (int i = 0; i < len_hist_2; i++) {
-			llist* path_1 = NULL;
-
-			if (GRAPHVIZ_DEBUG) {
-				fprintf(debug_graphs, "\n\ndigraph %u%i%i {\n", hist_num, i, j);
-				graph_id = 0;
-			}
-
-			double try_1 = recursive_search(best_find_1, 0., 511., 0., scatters_2_short[i], scatters_1_short[j], new_array_1, len_hist_1 - 1, &path_1);
-			if (GRAPHVIZ_DEBUG) {
-				fprintf(debug_graphs, "}\n");
-			}
-
-			double try_2 = INFINITY;
-			llist* path_2 = NULL;
-			if ((try_1 < best_combination) && (try_1 < best_find_1)) {
-
-				if (GRAPHVIZ_DEBUG) {
-					fprintf(debug_graphs, "\n\ndigraph %u%i%i {\n", hist_num, j, i);
-					graph_id = 0;
-				}
-
-				reduced_second_FOM = best_combination - try_1;
-				if (reduced_second_FOM > best_find_2) {
-					reduced_second_FOM = best_find_2;
-				}
-
-				scatter** new_array_2 = build_array_no_i(scatters_2_short, len_hist_2, i);
-				try_2 = recursive_search(reduced_second_FOM, 0., 511., 0., scatters_1_short[j], scatters_2_short[i], new_array_2, len_hist_2 - 1, &path_2);
-				if (GRAPHVIZ_DEBUG) {
-					fprintf(debug_graphs, "}\n");
-				}
-
-				free(new_array_2);
-			}
-
-
-			double combination = try_1 + try_2;//(try_1 * try_1) + (try_2 * try_2);
-			if ((try_1 < best_find_1) && (try_2 < reduced_second_FOM) && (combination < best_combination)) {
-				best_combination = combination;
-				best_scatter_1 = scatters_1_short[j];
-				first_FOM = try_1;
-				second_FOM = try_2;
-				if (best_found_path_1 != NULL) {
-					fmap(best_found_path_1, free_null);
-					delete_list(best_found_path_1);
-				}
-				best_found_path_1 = path_1;
-
-				best_scatter_2 = scatters_2_short[i];
-				if (best_found_path_2 != NULL) {
-					fmap(best_found_path_2, free_null);
-					delete_list(best_found_path_2);
-				}
-				best_found_path_2 = path_2;
-			} else {
-				fmap(path_1, free_null);
-				delete_list(path_1);
-				fmap(path_2, free_null);
-				delete_list(path_2);
-			}
-		}
-		free(new_array_1);
-	}
-
-	// move the path into the array of N vs alpha, beta, etc.
-	for (int i = 0; i < 2; i++) {
-		llist* current_location = NULL;
-		scatter* search_scatter = NULL;
-		int *t_vs_r;
-		// float* E_t_vs_r;
-		if (i == 0) {
-			current_location = list_head(best_found_path_1);
-			search_scatter = best_scatter_1;
-			t_vs_r = diagnostic->alpha_n_1;
-			// E_t_vs_r = alpha_eng_distro_n_1;
-		} else {
-			current_location = list_head(best_found_path_2);
-			search_scatter = best_scatter_2;
-			t_vs_r = diagnostic->alpha_n_2;
-			// E_t_vs_r = alpha_eng_distro_n_2;
-		}
-		if (search_scatter != NULL) {
-			for (int i = 0; i < FIRST_N; i++) {
-				if (current_location != NULL) {
-					t_vs_r[i] = (int)(((float*)(current_location->data))[0]);
-					// E_t_vs_r[i] = ((float*)current_location->data)[1];
-					current_location = current_location->down;
-				} else {
-					t_vs_r[i] = -1;
-					// E_t_vs_r[i] = -1;
-				}
-			}
-		}
-	}
-	fmap(best_found_path_1, free_null);
-	delete_list(best_found_path_1);
-	fmap(best_found_path_2, free_null);
-	delete_list(best_found_path_2);
-
-
-	free(scatters_1);
-	free(scatters_2);
-	free(scatters_1_short);
-	free(scatters_2_short);
-
-	scatter** both = (scatter**)malloc(sizeof(scatter*) * 2);
-	both[0] = best_scatter_1;
-	both[1] = best_scatter_2;
-
-	return both;
+	return endpoints;
 }
 
 /*
@@ -2012,7 +1253,7 @@ int cluster_finding(llist* list_of_crystals, llist** cluster_1, llist** cluster_
  * Now uses the double_tree_stat_iteration method, moving some of the behavior 
  * done by find_endpoints_stat into double_tree_stat_iteration instead.
  */
-scatter** find_double_endpoints_stat(llist* detector_history, double sigma_per_scatter, double energy_cut, debug* diagnostics) {
+scatter** find_double_endpoints_stat(llist* detector_history, double energy_cut, scatter* (*selection_method)(scatter**, int), debug* diagnostics) {
 	if (detector_history == NULL) {
 		return NULL;
 	}
@@ -2095,7 +1336,7 @@ scatter** find_double_endpoints_stat(llist* detector_history, double sigma_per_s
 	diagnostics->branch_scatters_1 = list_length(scat_list1);
 	diagnostics->branch_scatters_2 = list_length(scat_list2);
 	// run the actual finding of endpoint 1
-	scatter** endpoints = double_tree_stat_iteration(scat_list1, scat_list2, sigma_per_scatter, energy_cut, diagnostics);
+	scatter** endpoints = double_histories_search(scat_list1, scat_list2, energy_cut, selection_method, diagnostics);
 
 	scatter* endpoint1 = NULL;
 	scatter* endpoint2 = NULL;
@@ -2243,6 +1484,7 @@ int main(int argc, char **argv) {
 		exit = 1;
 	}
 	int binary = 0;
+    scatter* (*selection_method)(scatter**, int)  = random_selection;
 	if (argc > 1) {
 		// go check all of the following flags!
 		for (int i = 1; i < argc; i++) {
@@ -2250,45 +1492,31 @@ int main(int argc, char **argv) {
 				// binary flag
 				binary = 1;
 			}
-			if (!strcasecmp(argv[i], "-E")) {
-				// change energy per scatter
-				if (argc > (i + 1)) {
-					P_per_keV = strtod(argv[i+1], NULL);
-					printf("Energy per switch set to %lf keV/switch\n", P_per_keV);
-				} else {
-					fprintf(stderr, "-E flag not followed by float!\n");
-					return 1;
-				}
+			if (!strcasecmp(argv[i], "-Ex")) {
+				// set to selection by energy
+                selection_method = energy_max_selection;
 			}
-			if (!strcasecmp(argv[i], "-s")) {
-				// change spatial resolution
-				if (argc > (i + 1)) {
-					spc_uncert = strtod(argv[i+1], NULL);
-					printf("Spatial resolution set to %lf cm\n", spc_uncert);
-				} else {
-					fprintf(stderr, "-s flag not followed by float!\n");
-					return 1;
-				}
+			if (!strcasecmp(argv[i], "-Ei")) {
+				// set to selection by energy
+                selection_method = energy_min_selection;
+			}
+			if (!strcasecmp(argv[i], "-r")) {
+				// set to selection by radius
+				selection_method = radius_selection;
 			}
 			if (!strcasecmp(argv[i], "-t")) {
-				// change time randomness
-				if (argc > (i + 1)) {
-					time_uncert_cm = strtod(argv[i+1], NULL);
-					printf("Time resolution set to %lf cm\n", time_uncert_cm);
-				} else {
-					fprintf(stderr, "-t flag not followed by float!\n");
-					return 1;
-				}
+				// set to selection by time
+				selection_method = time_selection;
 			}
 			if (!strcasecmp(argv[i], "-d")) {
 				// change application of time randomness
 				run_time_rand = 0;
 				printf("Time randomness will not be applied\n");
 			}
-			if (!strcasecmp(argv[i], "-to")) {
-				// change application of time randomness
-				time_ordering = 1;
-				printf("Time ordering will be used\n");
+			if (!strcasecmp(argv[i], "-c")) {
+				// set cluster energy cut application
+				cluster_energy_cut = 1;
+                printf("Cluster energy cut will be applied\n");
 			}
 			if (!strcasecmp(argv[i], "-h")) {
 				printf("\nHelp information for reverse kinematics:\n");
@@ -2301,14 +1529,14 @@ int main(int argc, char **argv) {
 				printf("\t\t4) The energy cut (typically 0.1, giving +-10%%)\n");
 				printf("\tThese arguments can then be followed by optional flags:\n");
 				printf("\n\t-b  -- sets code to expect tuple data in binary format\n");
-				printf("\n\t-E [value in keV] -- sets keV/switch for the run\n");
-				printf("\n\t-s [value in cm]  -- sets spatial resolution for the run\n");
-				printf("\n\t-t [value in cm]  -- sets 1 sigma timing resolution IN CM\n");
+				printf("\n\t-r  -- sets to radius based Compton selection\n");
+				printf("\n\t-Ex -- sets to maximum energy based Compton selection\n");
+				printf("\n\t-Ei -- sets to minimum energy based Compton selection\n");
+				printf("\n\t-t  -- sets to time based Compton selection\n");
+				printf("\n\t-c  -- requires clusters to pass an energy cut\n");
 				printf("\n\t-h or -H -- display the help information\n");
 				printf("\n\t-d  -- turns off applying time randomness. This is for use\n");
 				printf("\tin debugging, particularly understanding close misses\n");
-				printf("\n\t-to -- turns on time ordering in the FOM. This allows the FOM\n");
-				printf("\tto include the time of scatter in it's decision.\n");
 				printf("\t\n");
 				if (exit) {
 					return 1;
@@ -2316,6 +1544,21 @@ int main(int argc, char **argv) {
 			}
 		}
 	}
+    printf("Compton selection method set to ");
+    if (selection_method == random_selection) {
+        printf("random\n");
+    } else if (selection_method == energy_max_selection) {
+        printf("max energy\n");
+    } else if (selection_method == energy_min_selection) {
+        printf("min energy\n");
+    } else if (selection_method == radius_selection) {
+        printf("radius\n");
+    } else if (selection_method == time_selection) {
+        printf("time\n");
+    } else {
+        fprintf(stderr, "selection method does not match valid methods!\n");
+        return 1;
+    }
 
 	// FILE* in_histories = fopen(argv[1], "r");
 	// if (in_histories == NULL) {
@@ -2385,15 +1628,12 @@ int main(int argc, char **argv) {
 	}
 
 	int run_in_patient = 1;
-	double fom_cutoff = strtod(argv[3], NULL);
-	double energy_cut = strtod(argv[4], NULL);
+	double energy_cut = strtod(argv[3], NULL);
 	
-	if ((!test_expected_energy()) || (test_vec_to_phi() != 3) || (!test_factorial()) || (test_crystal_indicies())) {
+	if ((test_vec_to_phi() != 3) || (!test_factorial()) || (test_crystal_indicies())) {
 		fprintf(stderr, "tests failed, exiting\n");
 		return 1;
 	}
-
-	detector_bore = shape_build(CYLINDER, bore_position, bore_dimentions, 3, -1.0);
 
 	fprintf(out_in_patient, "history number, in patient scatter occurance, ");
 	fprintf(out_in_patient, "scatters in branch 1, scatters in branch 2,");
@@ -2465,7 +1705,7 @@ int main(int argc, char **argv) {
 		debug diagnostic;
 		default_debug(&diagnostic);
 
-		scatter** endpoints = find_double_endpoints_stat(in_det_hist, fom_cutoff, energy_cut, &diagnostic);
+		scatter** endpoints = find_double_endpoints_stat(in_det_hist, energy_cut, selection_method, &diagnostic);
 		// scatter** endpoints = find_endpoints_stat(in_det_hist, energy_cutoff);
 
 		if (endpoints == NULL) {
