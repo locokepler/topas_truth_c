@@ -28,10 +28,10 @@
 #define BORE_RADIUS 45 // measured in cm
 #define SCANNER_THICKNESS 15 // measured in cm
 #define CRYSTAL_IN_PHI 1024 // these values roughly match uEXPLORER
-#define CRYSTAL_HEIGHT 1.5
+#define CRYSTAL_HEIGHT 1.8
 #define CRYSTAL_Z_THICKNESS 0.276
 char time_ordering = 0;
-
+char cluster_energy_cut = 0;
 
 double time_uncert_cm = 3.82; // in cm for one sigma, NOT ps or ns FWHM 300ps = 3.82
 double spc_uncert = 0.1; // cm
@@ -665,9 +665,25 @@ int test_crystal_indicies() {
 		vec_print(final_pos, stderr);
 		fprintf(stderr, "\n\tindex %i\n", index);
 		pass += 1;
+	} else {
+		printf("test_crystal_indicies: passed test 1\n");
 	}
-
-
+	initial_pos = three_vec(40.1, 34.3, -101.1);
+	// this was just a weird position to choose.
+	index = pos_to_crystal_index(initial_pos, crystals_in_phi, crystal_height, z_thickness);
+	final_pos = crystal_index_to_pos(index, crystals_in_phi, crystal_height, z_thickness);
+	if (vec_mag(vec_sub(initial_pos, final_pos)) > 1.0) {
+		// currently set to fail so that it can be checked by eye
+		fprintf(stderr, "test_crystal_indicies-TEST FAILED: expected these two positions to be close:\n");
+		fprintf(stderr, "\tinitial position: ");
+		vec_print(initial_pos, stderr);
+		fprintf(stderr, "\n\tend position: ");
+		vec_print(final_pos, stderr);
+		fprintf(stderr, "\n\tindex %i\n", index);
+		pass += 1;
+	} else {
+		printf("test_crystal_indicies: passed test 2\n");
+	}
 	if (pass != 0) {
 		fprintf(stderr, "!!! test_crystal_indicies: TESTS FAILED !!!\n\t%i tests failed\n", pass);
 		return 1;
@@ -1352,6 +1368,30 @@ scatter** double_tree_stat_iteration(llist* history_1, llist* history_2, double 
 	diagnostic->photoelectric_1 = 0;
 	diagnostic->photoelectric_2 = 0;
 
+	// if cluster energy cuts is set to run check if both clusters pass
+	if (cluster_energy_cut) {
+		llist* working_list = list_head(history_1);
+		double total_energy = 0;
+		while (working_list != NULL) {
+			total_energy += ((scatter*)(working_list->data))->deposit;
+			working_list = working_list->down;
+		}
+		if (fabs(total_energy - ELECTRON_MASS) > (energy_cut * ELECTRON_MASS)) {
+			// printf("1 total energy is %lf\n", total_energy);
+			return NULL;
+		}
+		working_list = list_head(history_2);
+		total_energy = 0;
+		while (working_list != NULL) {
+			total_energy += ((scatter*)(working_list->data))->deposit;
+			working_list = working_list->down;
+		}
+		if (fabs(total_energy - ELECTRON_MASS) > (energy_cut * ELECTRON_MASS)) {
+			// printf("2 total energy is %lf\n", total_energy);
+			return NULL;
+		}
+	}
+
 	// for each in history near, choose a history far and run the recursive search.
 	// hang onto the best result after each point
 
@@ -1441,6 +1481,12 @@ scatter** double_tree_stat_iteration(llist* history_1, llist* history_2, double 
 		scatters_2[i] = (scatter*)hist_2_bottom->data;
 		hist_2_bottom = hist_2_bottom->up;
 	}
+	if (diagnostic != NULL) {
+		// determine the distance between the first two scatters of each scatter list
+		diagnostic->dist_1 = vec_dist(scatters_1[0]->loc, scatters_1[1]->loc);
+		diagnostic->dist_2 = vec_dist(scatters_2[0]->loc, scatters_2[1]->loc);
+	}
+
 
 	scatter_quicksort(scatters_1, 0, len_hist_1 - 1);
 	scatter_quicksort(scatters_2, 0, len_hist_2 - 1);
@@ -1451,7 +1497,6 @@ scatter** double_tree_stat_iteration(llist* history_1, llist* history_2, double 
 		}
 		printf("\n");
 	}
-
 	// sorts the scatters by deposit energy, now only keep the largest LARGEST
 	scatter** scatters_1_short = (scatter**)malloc((LARGEST + SKIP) * sizeof(scatter*));
 	scatter** scatters_2_short = (scatter**)malloc((LARGEST + SKIP) * sizeof(scatter*));
@@ -1478,11 +1523,6 @@ scatter** double_tree_stat_iteration(llist* history_1, llist* history_2, double 
 	}
 	if (len_hist_2 > LARGEST + SKIP) {
 		len_hist_2 = LARGEST + SKIP;
-	}
-	if (diagnostic != NULL) {
-		// determine the distance between the first two scatters of each scatter list
-		diagnostic->dist_1 = vec_dist(scatters_1_short[0]->loc, scatters_1_short[1]->loc);
-		diagnostic->dist_2 = vec_dist(scatters_2_short[0]->loc, scatters_2_short[1]->loc);
 	}
 
 
@@ -2196,7 +2236,7 @@ lor* create_lor(scatter* a, scatter* b) {
 		b_time = 5.;
 	}
 
-	new->transverse_uncert = sqrt(a_space * a_space + b_space * b_space);
+	new->transverse_uncert = CRYSTAL_Z_THICKNESS * 0.5;
 	new->long_uncert = sqrt(a_space * a_space + b_space * b_space + 
 							a_time * a_time + b_time * b_time);
 	return new;
@@ -2273,6 +2313,11 @@ int main(int argc, char **argv) {
 				// change application of time randomness
 				time_ordering = 1;
 				printf("Time ordering will be used\n");
+			}
+			if (!strcasecmp(argv[i], "-c")) {
+				// set cluster energy cut application
+				cluster_energy_cut = 1;
+                printf("Cluster energy cut will be applied\n");
 			}
 			if (!strcasecmp(argv[i], "-h")) {
 				printf("\nHelp information for reverse kinematics:\n");
