@@ -75,7 +75,7 @@ debug_k_means_switchillator: inverse_kinematics_k_means.c llist.c vector_ops.c r
 	$(CC) -o debug_k_means_switchillator $^ $(CDBGFLAGS)
 
 KISS_comptons_crystals: KISS_comptons_in_crystals.c llist.c vector_ops.c
-	$(CC) -p KISS_comptons_crystals  $^ $(CFLAGS)
+	$(CC) -o KISS_comptons_crystals  $^ $(CFLAGS)
 
 debug_KISS_comptons_crystals: KISS_comptons_in_crystals.c llist.c vector_ops.c
-	$(CC) -p debug_KISS_comptons_crystals  $^ $(CDBGFLAGS)
+	$(CC) -o debug_KISS_comptons_crystals  $^ $(CDBGFLAGS)
