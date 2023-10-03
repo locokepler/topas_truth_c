@@ -24,7 +24,7 @@
 #define MODULE_SEPERATION 3 // min number of modules separation for trigger
 #define NEVER_CUT 0
 #define BINDING_WIDTH 0.5 // a 1 sigma width in keV for the effects of electron binding energy and doppler
-#define USE_SCATTER_DISTANCE 1 // flag on if to use the distance between scatters as part of FOM
+#define USE_SCATTER_DISTANCE 0 // flag on if to use the distance between scatters as part of FOM
 #define BORE_RADIUS 45 // measured in cm
 
 double time_uncert_cm = 6.36; // in cm for one sigma, NOT ps or ns FWHM
@@ -1312,12 +1312,17 @@ double recursive_search(double best, double current, double inc_eng, double inc_
 			fprintf(debug_graphs, "%u [label=\"end of check\"];\n", graph_id);
 			graph_id++;
 		}
-		// if ((loc != NULL) && (path != NULL) && (loc->truth != NULL)) {
-		// 	float* best_N_return = (float*)malloc(sizeof(float) * 2);
-		// 	best_N_return[0] = loc->truth->true_n;
-		// 	best_N_return[1] = loc->deposit;
-		// 	path[0] = add_to_top(NULL, best_N_return);
-		// }
+		if (path != NULL) {
+			float* best_N_return = (float*)malloc(sizeof(float) * 2);
+			if (origin->truth != NULL) {
+				best_N_return[0] = loc->truth->true_n;
+				best_N_return[1] = loc->truth->true_eng;
+			} else {
+				best_N_return[0] = -1;
+				best_N_return[1] = -1;
+			}
+			path[0] = add_to_top(NULL, best_N_return);
+		}
 		return current;
 	}
 	if (best < current) {
@@ -3035,7 +3040,7 @@ int main(int argc, char **argv) {
 	}
 
 	int run_in_patient = 1;
-	energy_cutoff = strtod(argv[3], NULL);
+	double fom_cutoff = strtod(argv[3], NULL);
 	
 	if ((!test_expected_energy()) || (test_vec_to_phi() != 3) || (!test_factorial())) {
 		fprintf(stderr, "tests failed, exiting\n");
@@ -3113,7 +3118,7 @@ int main(int argc, char **argv) {
 		branch_scatters_1 = 0;
 		branch_scatters_2 = 0;
 
-		scatter** endpoints = find_double_endpoints_stat(in_det_hist, energy_cutoff);
+		scatter** endpoints = find_double_endpoints_stat(in_det_hist, fom_cutoff);
 		// scatter** endpoints = find_endpoints_stat(in_det_hist, energy_cutoff);
 
 		if (endpoints == NULL) {

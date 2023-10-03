@@ -23,6 +23,7 @@ typedef struct scatter_truth_ {
 	int true_n;
 	double true_eng;
 	double true_time;
+	int true_gamma;
 } scatter_truth;
 
 typedef struct scatter_ {
@@ -38,7 +39,7 @@ typedef struct scatter_ {
 } scatter;
 
 
-double energy_cutoff;
+// double energy_cutoff;
 
 double first_scat_hypot;
 double second_scat_hypot;
