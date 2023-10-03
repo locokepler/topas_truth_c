@@ -31,6 +31,8 @@
 #define CRYSTAL_Z_THICKNESS 0.276
 char time_ordering = 0;
 char cluster_energy_cut = 0;
+char print_energies = 0;
+FILE* energies_file = NULL;
 
 
 double time_uncert_cm = 3.82; // in cm for one sigma, NOT ps or ns FWHM 300ps = 3.82
@@ -701,7 +703,7 @@ double add_quadrature(double a, double b) {
 }
 
 // selects a scatter randomly
-scatter* random_selection(scatter** cluster, int length) {
+scatter* random_selection(scatter** cluster, int length, double arg) {
     if (cluster == NULL) {
         return NULL;
     }
@@ -710,7 +712,7 @@ scatter* random_selection(scatter** cluster, int length) {
 }
 
 // selects scatter by the the highest energy
-scatter* energy_max_selection(scatter** cluster, int length) {
+scatter* energy_max_selection(scatter** cluster, int length, double arg) {
     if (cluster == NULL) {
         return NULL;
     }
@@ -718,14 +720,14 @@ scatter* energy_max_selection(scatter** cluster, int length) {
 }
 
 // selects scatter by the the highest energy
-scatter* energy_min_selection(scatter** cluster, int length) {
+scatter* energy_min_selection(scatter** cluster, int length, double arg) {
     if (cluster == NULL) {
         return NULL;
     }
     return cluster[length - 1]; // cluster should be sorted by energy
 }
 
-scatter* time_selection(scatter** cluster, int length) {
+scatter* time_selection(scatter** cluster, int length, double arg) {
     if (cluster == NULL) {
         return NULL;
     }
@@ -740,7 +742,7 @@ scatter* time_selection(scatter** cluster, int length) {
     return cluster[best_index];
 }
 
-scatter* radius_selection(scatter** cluster, int length) {
+scatter* radius_selection(scatter** cluster, int length, double arg) {
     if (cluster == NULL) {
         return NULL;
     }
@@ -758,6 +760,18 @@ scatter* radius_selection(scatter** cluster, int length) {
     return cluster[best_index];
 }
 
+// returns any scatter with over the energy cut in energy
+scatter* pe_selection(scatter** cluster, int length, double energy_cut) {
+    if (cluster == NULL) {
+        return NULL;
+    }
+	for (int i = 0; i < length; i++) {
+		if (fabs(cluster[i]->deposit - ELECTRON_MASS) < energy_cut * ELECTRON_MASS) {
+			return cluster[i];
+		}
+	}
+	return NULL;
+}
 
 /* single_cluster_call
  * Takes a single cluster with more than one scatter and selects a single scatter as the "first". 
@@ -765,7 +779,7 @@ scatter* radius_selection(scatter** cluster, int length) {
  * function. The selection method is passed to this function. If cluster energy cuts are to be
  * run then this function can return NULL in event the cluster fails the cut.
  */
-scatter* single_cluster_call(llist* cluster, double energy_cut, debug* diagnostic, int index_cluster, scatter* (*selection_method)(scatter**, int)) {
+scatter* single_cluster_call(llist* cluster, double energy_cut, debug* diagnostic, int index_cluster, scatter* (*selection_method)(scatter**, int, double)) {
     if (cluster == NULL) {
         return NULL;
     }
@@ -814,7 +828,7 @@ scatter* single_cluster_call(llist* cluster, double energy_cut, debug* diagnosti
         }
     }
 
-    scatter* chosen = selection_method(scatters, len_cluster);
+    scatter* chosen = selection_method(scatters, len_cluster, energy_cut);
     free(scatters);
     if ((diagnostic != NULL) && (chosen != NULL) && (chosen->truth != NULL)) {
         if (index_cluster == 0) {
@@ -834,7 +848,7 @@ scatter* single_cluster_call(llist* cluster, double energy_cut, debug* diagnosti
  * that against the energy cut to see if it can be accepted as a photoelectric interaction.
  * For clusters with more than one scatter the given method is used for choosing a scatter.
  */
-scatter** double_histories_search(llist* cluster_1, llist* cluster_2, double energy_cut, scatter* (*selection_method)(scatter**, int), debug* diagnostic) {
+scatter** double_histories_search(llist* cluster_1, llist* cluster_2, double energy_cut, scatter* (*selection_method)(scatter**, int, double), debug* diagnostic) {
 	if ((cluster_1 == NULL) || (cluster_2 == NULL)) {
 		return NULL;
 	}
@@ -1100,6 +1114,11 @@ llist* build_crystals(llist* scatters) {
 		working_crystal->energy = new_eng; // set the new energy
 
 	}
+	llist* printing_list = list_head(list_of_crystals);
+	while (printing_list != NULL) {
+		fprintf(energies_file, "%lf\n", ((crystal*)(printing_list->data))->energy);
+		printing_list = printing_list->down;
+	}
 
 	return list_of_crystals;
 }
@@ -1253,7 +1272,7 @@ int cluster_finding(llist* list_of_crystals, llist** cluster_1, llist** cluster_
  * Now uses the double_tree_stat_iteration method, moving some of the behavior 
  * done by find_endpoints_stat into double_tree_stat_iteration instead.
  */
-scatter** find_double_endpoints_stat(llist* detector_history, double energy_cut, scatter* (*selection_method)(scatter**, int), debug* diagnostics) {
+scatter** find_double_endpoints_stat(llist* detector_history, double energy_cut, scatter* (*selection_method)(scatter**, int, double), debug* diagnostics) {
 	if (detector_history == NULL) {
 		return NULL;
 	}
@@ -1484,7 +1503,7 @@ int main(int argc, char **argv) {
 		exit = 1;
 	}
 	int binary = 0;
-    scatter* (*selection_method)(scatter**, int)  = random_selection;
+    scatter* (*selection_method)(scatter**, int, double)  = random_selection;
 	if (argc > 1) {
 		// go check all of the following flags!
 		for (int i = 1; i < argc; i++) {
@@ -1507,6 +1526,15 @@ int main(int argc, char **argv) {
 			if (!strcasecmp(argv[i], "-t")) {
 				// set to selection by time
 				selection_method = time_selection;
+			}
+			if (!strcasecmp(argv[i], "-p")) {
+				// set to selection by photoelectric
+				selection_method = pe_selection;
+			}
+			if (!strcasecmp(argv[i], "-a")) {
+				// tell program to print out crystal energies
+				printf("printing crystal energies\n");
+				print_energies = 1;
 			}
 			if (!strcasecmp(argv[i], "-d")) {
 				// change application of time randomness
@@ -1533,7 +1561,9 @@ int main(int argc, char **argv) {
 				printf("\n\t-Ex -- sets to maximum energy based Compton selection\n");
 				printf("\n\t-Ei -- sets to minimum energy based Compton selection\n");
 				printf("\n\t-t  -- sets to time based Compton selection\n");
+				printf("\n\t-p  -- sets to photoelectric based selection\n");
 				printf("\n\t-c  -- requires clusters to pass an energy cut\n");
+				printf("\n\t-a  -- prints the energies of every crystal to an output file\n");
 				printf("\n\t-h or -H -- display the help information\n");
 				printf("\n\t-d  -- turns off applying time randomness. This is for use\n");
 				printf("\tin debugging, particularly understanding close misses\n");
@@ -1553,6 +1583,8 @@ int main(int argc, char **argv) {
         printf("min energy\n");
     } else if (selection_method == radius_selection) {
         printf("radius\n");
+    } else if (selection_method == pe_selection) {
+        printf("photoelectric\n");
     } else if (selection_method == time_selection) {
         printf("time\n");
     } else {
@@ -1572,7 +1604,7 @@ int main(int argc, char **argv) {
 	}
 	char* lor_file = (char*)malloc(sizeof(char) * (strlen(argv[2]) + 10));
 	char* debug_file = (char*)malloc(sizeof(char) * (strlen(argv[2]) + 10));
-	// char* eng_file = (char*)malloc(sizeof(char) * (strlen(argv[2]) + 10));
+	char* eng_file = (char*)malloc(sizeof(char) * (strlen(argv[2]) + 10));
 	char* true_file;
 	char* misID_file;
 	char* lead_file;
@@ -1584,7 +1616,7 @@ int main(int argc, char **argv) {
 
 	strcpy(debug_file, argv[2]);
 	strcpy(lor_file, argv[2]);
-	// strcpy(eng_file, argv[2]);
+	strcpy(eng_file, argv[2]);
 	if (LOR_GROUP) {
 		strcpy(true_file, argv[2]);
 		strcpy(misID_file, argv[2]);
@@ -1593,7 +1625,7 @@ int main(int argc, char **argv) {
 
 	debug_file = strcat(debug_file, ".debug");
 	lor_file = strcat(lor_file, ".lor");
-	// eng_file = strcat(eng_file, ".eng");
+	eng_file = strcat(eng_file, ".eng");
 	if (LOR_GROUP) {
 		true_file = strcat(true_file, ".true");
 		misID_file = strcat(misID_file, ".misID");
@@ -1602,7 +1634,7 @@ int main(int argc, char **argv) {
 
 	FILE* out_in_patient = fopen(debug_file, "w");
 	FILE* lor_output = fopen(lor_file, "w");
-	// FILE* eng_output = fopen(eng_file, "w");
+	energies_file = fopen(eng_file, "w");
 	FILE* true_out;
 	FILE* misID_out;
 	if (LOR_GROUP) {
@@ -1727,11 +1759,11 @@ int main(int argc, char **argv) {
 				}
 			}
 
-			if (!LOR_GROUP) {
-				fprintf(lor_output, "%i, ", ((event*)(in_det_hist->data))->number);
-				print_lor(lor_output, result);
-				fprintf(lor_output, "\n");
-			} else {
+			fprintf(lor_output, "%i, ", ((event*)(in_det_hist->data))->number);
+			print_lor(lor_output, result);
+			fprintf(lor_output, "\n");
+			
+			if (LOR_GROUP) {
 				if (CUT_IPS && (wasIPS)) {
 					// we had an in patient scatter, so don't output the data
 				} else {
