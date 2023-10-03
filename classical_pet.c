@@ -22,11 +22,18 @@
 #define P_PER_KEV 30 // photons per keV. Efficiencys have already been applied
 // about 50 for NaI(Tl)
 // 30 for LYSO
+#define BORE_RADIUS 45 // measured in cm
+#define SCANNER_THICKNESS 9 // measured in cm
+#define CRYSTAL_IN_PHI 1024 // these values roughly match uEXPLORER
+#define CRYSTAL_HEIGHT 1.8
+#define CRYSTAL_Z_THICKNESS 0.276
+
 
 #define READ_DEBUG 0
 #define GENERAL_DEBUG 0
 #define TREE_DEBUG 0
 #define GRAPHVIZ_DEBUG 0
+#define CLUSTER_DEBUG 0
 FILE* debug_graphs = NULL;
 uint graph_id;
 
@@ -35,6 +42,17 @@ uint hist_num;
 uint true_counts = 0;
 uint scatter_counts = 0;
 
+int correct_clustering = 0;
+int total_clustering = 0;
+
+typedef struct _crystal {
+	double energy;
+	double time;
+	int index;
+	uint true_n;
+	int true_gamma;
+	vec3d pos;
+} crystal;
   
 // reads a line from the source file as an event
 event* read_line(FILE* source) {
@@ -180,6 +198,24 @@ scatter* copy_scatter(scatter* a) {
 		new->truth->true_time = a->truth->true_time;
 	}
 	return new;
+}
+
+void print_scatter(scatter* a) {
+	if (a == NULL) {
+		return;
+	}
+	printf("scatter: E = %lf +- %lf, pos: ", a->deposit, a->eng_uncert);
+	vec_print(a->loc, stdout);
+	printf(", t = %lf +- %lf, gamma %i", a->time, a->time_uncert, (int)(a->has_dir));
+	if (a->truth != NULL) {
+		printf(", N = %X", a->truth->true_n);
+	}
+	printf("\n");
+}
+
+void* mappable_print_scatter(void* a) {
+	print_scatter((scatter*)a);
+	return a;
 }
 
 void* delete_scatter(void* in) {
@@ -499,6 +535,10 @@ uint inside_radius(double distance, double height, event* event) {
 	return 0;
 }
 
+// returns 1 for finding the first gamma it runs across has an IPS. Returns a 
+// 2 for findign the second gamma it runs across has an IPS. These are then added
+// to give 0,1,2,3 for the four possible cases: 0: no IPS, 1: only the first gamma,
+// 2: only the second gamma, and 3: both gammas
 int rec_in_paitent(llist* list, int reject_id) {
 	if (list == NULL) {
 		return 0;
@@ -506,21 +546,21 @@ int rec_in_paitent(llist* list, int reject_id) {
 	// finds the first two gammas of the given history and looks to see if they
 	// are just about 511 keV
 	event* current = (event*)list->data;
-	if ((current->particle == 22) && (reject_id == -1)) {
+	if ((current->particle == 22) && (reject_id == -1) && (current->id < 4)) {
 		// we have our first gamma
 		if (fabs(current->energy - ELECTRON_MASS) > 0.1) {
 			// we had an IPS, so lets say so
-			return 1;
+			return 1 + rec_in_paitent(list->down, current->id);
 		} else {
 			reject_id = current->id;
 			return rec_in_paitent(list->down, reject_id);
 		}
 	}
-	if ((current->particle == 22) && (current->id != reject_id)) {
+	if ((current->particle == 22) && (current->id != reject_id) && (current->id < 4)) {
 		// different gamma!
 		if (fabs(current->energy - ELECTRON_MASS) > 0.1) {
 			// we had an IPS, so lets say so
-			return 1;
+			return 2;
 		} else {
 			return 0;
 		}
@@ -541,6 +581,91 @@ int in_patient(llist* list) {
 		fprintf(stderr, "in_patient passed NULL pointer\n");
 	list = list_head(list);
 	return rec_in_paitent(list, -1);
+}
+
+// calculates the crystal number that given vector should be associated with
+// this is a signed index number. Negative numbers mean -Z values. Index changes
+// by 1 with rotations in phi, changes by the number of crystals in the layer
+// radially inward for increasing R, changes by the number of crystals in a Z
+// slice. This version assumes the same number of crystals in phi at all R values
+int pos_to_crystal_index(vec3d pos, int crystals_in_phi, double crystal_r, double z_thickness) {
+	// calculate the crystals in a z slice
+	pos.z += 200.0;
+	int z_silce_crystals = crystals_in_phi * ((int)ceil((double)SCANNER_THICKNESS / crystal_r));
+	int z_slice_index = (int)floor(pos.z / z_thickness) * z_silce_crystals;
+	// printf("pos_to: phi = %lf\n", vec_to_phi(pos));
+	int phi_index = (int)floor((vec_to_phi(pos) / (PI * 2.0)) * crystals_in_phi);
+	pos.z = 0.0;
+	// printf("pos_to: r = %lf\n", vec_mag(pos));
+	int r_index = (int)floor((vec_mag(pos) - (double)BORE_RADIUS) / crystal_r) * crystals_in_phi;
+	return phi_index + z_slice_index + r_index;
+}
+
+
+vec3d crystal_index_to_pos(int index, int crystals_in_phi, double crystal_r, double z_thickness) {
+	int z_silce_crystals = crystals_in_phi * ((int)ceil((double)SCANNER_THICKNESS / crystal_r));
+	double z_dist = (index / z_silce_crystals) * z_thickness + (0.5 * z_thickness);
+	int index_no_z = index % z_silce_crystals;
+	double radius = (index_no_z / crystals_in_phi) * crystal_r + BORE_RADIUS + (0.5 * crystal_r);
+	int index_no_r = index_no_z % crystals_in_phi;
+	double phi = (((double)index_no_r + 0.5) / (double)crystals_in_phi) * (PI * 2.0);
+	vec3d cartesian;
+	cartesian.z = z_dist - 200.0;
+	cartesian.x = radius * cos(phi);
+	cartesian.y = radius * sin(phi);
+	// printf("to_pos: phi = %lf\n", phi);
+	// printf("to_pos: r = %lf\n", radius);
+	return cartesian;
+}
+
+int test_crystal_indicies() {
+	int pass = 0;
+	// first test case, check a vector inside the detector and see if when converted back to
+	// a vector it is close to the correct position
+	int crystals_in_phi = 1024; // these values roughly match uEXPLORER
+	double crystal_height = 1.5;
+	double z_thickness = 0.276;
+	vec3d initial_pos = three_vec(35.1, 34.3, -101.1);
+	// this was just a weird position to choose.
+	int index = pos_to_crystal_index(initial_pos, crystals_in_phi, crystal_height, z_thickness);
+	vec3d final_pos = crystal_index_to_pos(index, crystals_in_phi, crystal_height, z_thickness);
+	if (vec_mag(vec_sub(initial_pos, final_pos)) > 1.0) {
+		// currently set to fail so that it can be checked by eye
+		fprintf(stderr, "test_crystal_indicies-TEST FAILED: expected these two positions to be close:\n");
+		fprintf(stderr, "\tinitial position: ");
+		vec_print(initial_pos, stderr);
+		fprintf(stderr, "\n\tend position: ");
+		vec_print(final_pos, stderr);
+		fprintf(stderr, "\n\tindex %i\n", index);
+		pass += 1;
+	}
+
+
+	if (pass != 0) {
+		fprintf(stderr, "!!! test_crystal_indicies: TESTS FAILED !!!\n\t%i tests failed\n", pass);
+		return 1;
+	}
+	return 0;
+}
+
+void print_crystal(FILE* output, crystal* a) {
+	fprintf(output, "E = %lf keV, t = %lf ns, index %i at ", a->energy, a->time, a->index);
+	vec_print(crystal_index_to_pos(a->index, CRYSTAL_IN_PHI, CRYSTAL_HEIGHT, CRYSTAL_Z_THICKNESS), output);
+	fprintf(output, ", with true N of");
+	uint true_n_mask = 0b1;
+	for (int i = 0; i < sizeof(int) * 8; i++) {
+		if (true_n_mask & a->true_n) {
+			fprintf(output, " %i,", i);
+		}
+		true_n_mask = true_n_mask << 1;
+	}
+
+	fprintf(output, " for gamma %i\n", a->true_gamma);
+}
+
+void* mappable_crystal_print(void* in) {
+	print_crystal(stdout, (crystal*)in);
+	return in;
 }
 
 // /*
@@ -1041,34 +1166,23 @@ int closest_gamma(llist* history, vec3d target, double* deposited) {
 	return best_id;
 }
 
-// we now have the infirsturcture for finding what scatter associated with a
-// gamma is the first. Now we need to run this twice (once on each annihilation
-// gamma) to get the two ends. Then from that we have the two ends and can
-// run a modified version of first_scat_miss from the energy cut calculations
-
-
 /*
  * build_scatters
  * takes the list of interactions in the detector volume and makes a list of
  * energy deposition locations that are the scatter locations. This is the
- * current version of the "cluster finding" algorithm. It uses truth data to
- * find the location of the deposit. It also uses the real energy quantity
- * deposited at the location, not an estimate using the switchillator.
- * It returns the head of a new list of the scatter locations.
+ * current version of the "cluster finding" algorithm. A list of all of the
+ * scatters is passed out, not combined into crystals. No resolutions are
+ * applied here.
  */
-llist* build_scatters(llist* detector_history, int id, int* count_of_scatters) {
+llist* build_scatters(llist* detector_history) {
 	if (detector_history == NULL) {
 		return NULL;
 	}
 	// looks to find the first instance of each electron showing up. Using the
-	// location of that eele_dirith a scatter
+	// location of that a scatter
 	// of a gamma with the same identifier as id. If all is good the location is
-	// added as a scatter with the electron's energy.
-
-	// now also determines the direction of the electron. This is returned as
-	// a simple vector pointing from the current place to the second location
-	// of the electron. If the electron does not produce a second location then
-	// the scatter is given a NULL value for the direction
+	// added as a scatter with the electron's energy plus any energy deposited by
+	// a gamma at that location
 
 	// put us at the start of the list
 	detector_history = list_head(detector_history);
@@ -1102,32 +1216,22 @@ llist* build_scatters(llist* detector_history, int id, int* count_of_scatters) {
 				//  so which gamma is it from?
 				double deposit;
 				int gamma_id = closest_gamma(detector_history, ((event*)detector_history->data)->location, &deposit);
-				if (gamma_id == id) {
-					// time to add this electron to the scatter list
-					if (count_of_scatters != NULL) {
-						count_of_scatters[0]++;
-					}
-					vec3d scatter_loc = (((event*)detector_history->data)->location);
-					event* cur_event = (event*)detector_history->data;
+				// time to add this electron to the scatter list
 
-					char has_dir = 0; // we aren't doing anything with electrons so let's not pretend
-					scatter* add_scatter;
-					double photons = cur_event->energy * (double)P_PER_KEV;
-					add_scatter = new_scatter(scatter_loc, three_vec(0,0,0), has_dir, cur_event->energy + deposit, cur_event->tof, sqrt(photons) / ((double)P_PER_KEV), SPC_UNCERT_PLANE, TIME_UNCERT_CM);
-					scatter_truth* truth_info = (scatter_truth*)malloc(sizeof(scatter_truth));
-					truth_info->true_eng = cur_event->energy;
-					truth_info->true_time = cur_event->tof;
-					add_scatter->truth = truth_info;
+				vec3d scatter_loc = (((event*)detector_history->data)->location);
+				event* cur_event = (event*)detector_history->data;
 
-					if (add_scatter->deposit <= MIN_SCAT_ENG) {
-						// after energy randomness there can be negative energies
-						// if there is one delete the addition of this scatter
-						// and act as if no swichilator got flipped
-						delete_scatter(add_scatter); 
-					} else {
-						scatter_list = add_to_bottom(scatter_list, add_scatter);
-					}
-				}
+				// char has_dir = 0; // we aren't doing anything with electrons so let's not pretend
+				scatter* add_scatter;
+				double photons = cur_event->energy * P_PER_KEV;
+				add_scatter = new_scatter(scatter_loc, three_vec(0,0,0), gamma_id, cur_event->energy + deposit, cur_event->tof, sqrt(photons) / P_PER_KEV, SPC_UNCERT_PLANE, TIME_UNCERT_CM);
+				scatter_truth* truth_info = (scatter_truth*)malloc(sizeof(scatter_truth));
+				truth_info->true_eng = cur_event->energy;
+				truth_info->true_time = cur_event->tof;
+				add_scatter->truth = truth_info;
+
+				scatter_list = add_to_bottom(scatter_list, add_scatter);
+
 				// add the electron to the list of electrons we have checked
 				int* electron_id = (int*)malloc(sizeof(int));
 				*electron_id = ((event*)detector_history->data)->id;
@@ -1139,70 +1243,84 @@ llist* build_scatters(llist* detector_history, int id, int* count_of_scatters) {
 
 	fmap(checked_electrons, free_null);
 	delete_list(checked_electrons);
-
-	// go through and add the real n value for each scatter
-	// the list will be in reverse order due to TOPAS/Geant4 call structure
-	int length = list_length(scatter_list);
-	llist* head = scatter_list;
-	for (int i = 0; i < length; i++) {
-		scatter_truth* true_info = ((scatter*)(head->data))->truth;
-		if (true_info != NULL) {
-			true_info->true_n = length - i;
+	// go through and check which scatter N each one is
+	int gamma_2_N = 0;
+	int gamma_3_N = 0;
+	for (llist* ordering = list_tail(scatter_list); ordering != NULL; ordering = ordering->up) {
+		scatter* working_scatter = (scatter*)(ordering->data);
+		if ((working_scatter->truth != NULL) && (working_scatter->has_dir == 2)) {
+			gamma_2_N += 1;
+			working_scatter->truth->true_n = gamma_2_N;
+		} else if ((working_scatter->truth != NULL)) {
+			gamma_3_N += 1;
+			working_scatter->truth->true_n = gamma_3_N;
 		}
-		head = head->down;
 	}
 
-	// time to consoidate the various scatters. The following consolidation is done in O(nlog(n))
-	// Start with an entry in the scatter list. Check if there are any other scatters in the list
-	// within a spatial uncertainty of the current location. If there are add the energy of the
-	// other found scatters to the original, and make the position the weighted average position.
-	// After combining the scatters, remove all but the parent scatter.
-	scatter_list = list_head(scatter_list);
-	for (llist* uncombined_scatter_list = scatter_list; uncombined_scatter_list != NULL; uncombined_scatter_list = uncombined_scatter_list->down) {
-		scatter* working_scatter = (scatter*)(uncombined_scatter_list->data);
+	// return the list of scatters for consolidation into specific crystals
 
-		llist* search_scatter_list = uncombined_scatter_list->down;
-		while (search_scatter_list != NULL) {
-			// check how close the two scatters are
-			scatter* check_scatter = ((scatter*)(search_scatter_list->data));
-			vec3d separation = vec_sub(check_scatter->loc, working_scatter->loc);
-			if (vec_mag(separation) < 0.5 * SPC_UNCERT_PLANE) {
-				// ok they were close, combine the scatters
-				// choose the earliest time that could have been seen
-				working_scatter->time = (working_scatter->time < check_scatter->time) ? working_scatter->time : check_scatter->time;
-				// weighted average of the position. 
-				double weight = check_scatter->deposit / (check_scatter->deposit + working_scatter->deposit);
-				// weight gives how much to move along the vector from working_scatter towards check_scatter
-				vec3d new_loc = vec_add(working_scatter->loc, vec_scaler(separation, weight));
-				working_scatter->loc = new_loc;
-				// now combine the energies
-				working_scatter->deposit += check_scatter->deposit;
+	return scatter_list;
+}
 
-				// finally remove the excess scatter
-				delete_scatter(check_scatter);
-				llist* entry_for_removal = search_scatter_list;
-				search_scatter_list = search_scatter_list->up;
-				search_scatter_list->down = entry_for_removal->down;
-				if (entry_for_removal->down != NULL) {
-					entry_for_removal->down->up = entry_for_removal->up;
+// takes a list of scatters and makes a list of crystals that lit up, and how
+// much they did so.
+llist* build_crystals(llist* scatters) {
+	if (scatters == NULL) {
+		return NULL;
+	}
+	llist* list_of_crystals = NULL;
+
+	// we will work our way down the list of scatters adding each scatter's
+	// energy to the right crystal. If a scatter has the same crystal ID as
+	// an already existing scatter then we do not make a new crystal and instead
+	// add the energy to the current one
+	scatters = list_head(scatters);
+	while (scatters != NULL) {
+		scatter* working_scatter = (scatter*)(scatters->data);
+		int scatter_index = pos_to_crystal_index(working_scatter->loc, CRYSTAL_IN_PHI, CRYSTAL_HEIGHT, CRYSTAL_Z_THICKNESS);
+
+		// check to see if the crystals list has the current index
+		llist* check_crystals = list_head(list_of_crystals);
+		int preexisting_crystal = 0;
+		while ((check_crystals != NULL) && (!preexisting_crystal)) {
+			crystal* working_crystal = (crystal*)(check_crystals->data);
+			if (working_crystal->index == scatter_index) {
+				working_crystal->energy += working_scatter->deposit;
+				if (working_crystal->time > working_scatter->time) {
+					working_crystal->time = working_scatter->time;
 				}
-				free(entry_for_removal);
+				if (working_scatter->truth != NULL) {
+					working_crystal->true_n = working_crystal->true_n | ( 0b1 << working_scatter->truth->true_n);
+				}
+				preexisting_crystal = 1;
 			}
-			// continue the search
-			search_scatter_list = search_scatter_list->down;
+
+
+			check_crystals = check_crystals->down;
+		}
+		if (preexisting_crystal == 0) {
+			// no preexisting crystal to add the energy to, need to make one;
+			crystal* new_crystal = (crystal*)malloc(sizeof(crystal));
+			new_crystal->energy = working_scatter->deposit;
+			new_crystal->index = scatter_index;
+			new_crystal->pos = crystal_index_to_pos(scatter_index, CRYSTAL_IN_PHI, CRYSTAL_HEIGHT, CRYSTAL_Z_THICKNESS);
+			new_crystal->time = working_scatter->time;
+			new_crystal->true_gamma = working_scatter->has_dir;
+			if (working_scatter->truth != NULL) {
+				new_crystal->true_n = 0b1 << working_scatter->truth->true_n;
+			} else {
+				new_crystal->true_n = 0b0;
+			}
+			list_of_crystals = add_to_top(list_of_crystals, new_crystal);
 		}
 
+		scatters = scatters->down;
 	}
 
-	// now that the scatter list is consolidated, apply uncertainties to the whole shebang:
+	// here is where we would add energy and time resolution randomness.
+	for (llist* unrandom = list_head(list_of_crystals); unrandom != NULL; unrandom = unrandom->down) {
+		crystal* working_crystal = (crystal*)(unrandom->data);
 
-	llist* unrandomized_scatters = scatter_list;
-	while (unrandomized_scatters != NULL) {
-		scatter* working_scatter = (scatter*)(unrandomized_scatters->data);
-		// add random variation to the scatter location and time
-		double x_rand = 1.0 * (drand48() - 0.5);
-		double y_rand = 1.0 * (drand48() - 0.5);
-		double z_rand = 1.0 * (drand48() - 0.5);
 		double time_var = 0.0;
 		double eng_var = 0.0;
 		for (int i = 0; i < UNCERT_REP; i++) {
@@ -1214,49 +1332,145 @@ llist* build_scatters(llist* detector_history, int id, int* count_of_scatters) {
 		eng_var  -= ((float)(UNCERT_REP) * 0.5);
 		// distance and time now have their variation size
 
-		// assuming that the center of the bore is on the z axis
-		// the radial direction (taken as the z_rand value) is along that
-		// vector
-		vec3d radial = three_vec(working_scatter->loc.x, working_scatter->loc.y, 0);
-		vec3d radial_norm = vec_norm(radial);
-
-		radial = vec_scaler(radial_norm, z_rand * SPC_UNCERT_RAD);
-		// radial blurring calculated
-		vec3d bore = three_vec(0,0,1);
-		// direction of the bore
-		vec3d circumfrence = vec_cross(radial_norm, bore);
-		// direction around the circumfrence at the scatter location
-		vec3d circum_norm = vec_norm(circumfrence);
-		vec3d circum_rand = vec_scaler(circum_norm, y_rand * SPC_UNCERT_PLANE);
-		// blurring around the direction of the circumfrence
-		circum_rand.z += x_rand * SPC_UNCERT_PLANE;
-		// blurring along the direction of the bore
-		vec3d rand_space = vec_add(radial, circum_rand);
-		// combine all of the blurring
-		vec3d rand_loc = vec_add(working_scatter->loc, rand_space);
-		// add the blurring to the scatter location
-
-		working_scatter->loc = rand_loc;
-		// distance variation set
-		// SEE TIME VARIATION ON OR OFF
-		// if (run_time_rand) {
+		// calculate the amount to adjust the time by
 		double time_adjust = time_var * (TIME_UNCERT_CM / SPD_LGHT);
-		// printf("time randomness (ns) %lf\n", time_adjust);
-		working_scatter->time += time_adjust;
-		// }
-		// done adding time randomness
-		// find the new energy (after blurring)
-		// printf("energy: %lf\nuncertainty: %lf\nvariation: %lf\n", add_scatter->deposit, add_scatter->eng_uncert, eng_var);
-		double new_eng = (eng_var * (sqrt(working_scatter->deposit * P_PER_KEV) / P_PER_KEV)) + working_scatter->deposit;
-		// printf("original energy = %lf, \tnew energy = %lf\n", working_scatter->deposit, new_eng);
-		// discretize the energy value to line up with the number of
-		working_scatter->deposit = new_eng;
-		// done adding energy randomness
-		// done adding random variation
-		unrandomized_scatters = unrandomized_scatters->down;
+		// blur the time
+		working_crystal->time += time_adjust;
+
+		// calculate the new energy using the number of photons we will count
+		double new_eng = (eng_var * (sqrt(working_crystal->energy * P_PER_KEV) / P_PER_KEV)) + working_crystal->energy;
+		working_crystal->energy = new_eng; // set the new energy
+
 	}
 
-	return scatter_list;
+	return list_of_crystals;
+}
+
+// takes a crystal and converts it to a scatter for use by a search algorithm
+scatter* crystal_to_scatter(crystal* in) {
+	if (in == NULL) {
+		return NULL;
+	}
+	scatter* new = new_scatter(in->pos, three_vec(0,0,0), in->true_gamma, in->energy, in->time, sqrt(in->energy / P_PER_KEV), SPC_UNCERT_PLANE, TIME_UNCERT_CM);
+	new->truth = (scatter_truth*)malloc(sizeof(scatter_truth));
+	int true_n_mask = 0b1;
+	for (int i = 0; i < sizeof(int) * 8; i++) {
+		if (true_n_mask & in->true_n) {
+			new->truth->true_n = i;
+			break;
+		}
+		true_n_mask = true_n_mask << 1;
+	}
+	// new->truth->true_n = in->true_n;
+	return new;
+}
+
+// takes a list of crystal interactions and makes a pair of lists of scatters for processing
+// in the standard inverse_kinematics methods.
+// The two lists are made by cluster finding to determine the sets of spatially close scatters.
+// The cluster finding is done by k-means. Choose two points as inital means. Then for each crystal
+// calculate the closer mean and move the means to the average location of their crystals
+
+// if the code fails for some reason the function returns a 0. Otherwise it returns a 1.
+int cluster_finding(llist* list_of_crystals, llist** cluster_1, llist** cluster_2) {
+	if ((list_of_crystals == NULL) || (cluster_1 == NULL) || (cluster_2 == NULL)) {
+		// not all the arguments are available, cannot continue
+		return 0;
+	}
+	int length = list_length(list_of_crystals);
+	if (length < 2) {
+		return 0;
+	} else if (length == 2) {
+		// make one scatter list from each crystal
+		scatter* first = crystal_to_scatter((crystal*)(list_of_crystals->data));
+		cluster_1[0] = add_to_top(NULL, first);
+		scatter* second = crystal_to_scatter((crystal*)(list_of_crystals->down->data));
+		cluster_2[0] = add_to_top(NULL, second);
+		return 1;
+	}
+
+	// OK we now need to do actual cluster finding
+	// set the two initial mean locations to be the first and last crystals in the list
+	// for prior data handling reasons these are likely to be close to the correct positions
+	vec3d mean_1 = ((crystal*)(list_head(list_of_crystals)->data))->pos;
+	vec3d mean_2 = ((crystal*)(list_tail(list_of_crystals)->data))->pos;
+
+	// do Lloyd's algorithm for x iterations
+
+	for (int i = 0; i < 10; i++) {
+		llist* set_of_crystals = list_head(list_of_crystals);
+		vec3d adj_mean_1 = three_vec(0,0,0);
+		int count_mean_1 = 0;
+		vec3d adj_mean_2 = three_vec(0,0,0);
+		int count_mean_2 = 0;
+		while (set_of_crystals != NULL) {
+			crystal* working_crystal = (crystal*)(set_of_crystals->data);
+			// check to see which mean is closer
+			vec3d from_mean_1 = vec_sub(working_crystal->pos, mean_1);
+			vec3d from_mean_2 = vec_sub(working_crystal->pos, mean_2);
+			if (vec_mag(from_mean_1) < vec_mag(from_mean_2)) {
+				// mean_1 was closer
+				count_mean_1 += 1;
+				adj_mean_1 = vec_add(adj_mean_1, from_mean_1);
+			} else {
+				// mean_2 was closer
+				count_mean_2 += 1;
+				adj_mean_2 = vec_add(adj_mean_2, from_mean_2);
+			}
+
+			set_of_crystals = set_of_crystals->down;
+		}
+		// we have now found what cluster each is in and how much to move
+		// the means by
+		adj_mean_1 = vec_scaler(adj_mean_1, 1.0 / (double)count_mean_1);
+		adj_mean_2 = vec_scaler(adj_mean_2, 1.0 / (double)count_mean_2);
+		mean_1 = vec_add(mean_1, adj_mean_1);
+		mean_2 = vec_add(mean_2, adj_mean_2);
+	}
+
+	// we now have our set mean positions, lets make the two scatter lists based on that
+	llist* set_of_crystals = list_head(list_of_crystals);
+	cluster_1[0] = NULL;
+	cluster_2[0] = NULL;
+	// set up some truth checking data to know how well the cluster finding went
+	int correct_find = 1;
+	int first_gamma = 0;
+	int second_gamma = 0;
+
+	while (set_of_crystals != NULL) {
+		crystal* working_crystal = (crystal*)(set_of_crystals->data);
+		scatter* new = crystal_to_scatter(working_crystal);
+		// check which cluster this one is in
+		if (vec_mag(vec_sub(working_crystal->pos, mean_1)) < vec_mag(vec_sub(working_crystal->pos, mean_2))) {
+			// this was placed into cluster 1
+			cluster_1[0] = add_to_bottom(cluster_1[0], new);
+			if (first_gamma == 0) {
+				first_gamma = working_crystal->true_gamma;
+			} else {
+				if (first_gamma != working_crystal->true_gamma) {
+					correct_find = 0;
+				}
+			}
+		} else {
+			cluster_2[0] = add_to_bottom(cluster_2[0], new);
+			if (second_gamma == 0) {
+				second_gamma = working_crystal->true_gamma;
+			} else {
+				if (second_gamma != working_crystal->true_gamma) {
+					correct_find = 0;
+				}
+			}
+		}
+
+		set_of_crystals = set_of_crystals->down;
+	}
+	if (correct_find) {
+		correct_clustering += 1;
+	}
+	total_clustering += 1;
+	// we have now divided the two sets of scatters into clusters
+
+	return 1;
 }
 
 
@@ -1301,8 +1515,38 @@ scatter** find_endpoints(llist* detector_history, double energy_percent) {
 	}
 	// printf("gamma id 1: %i\tgamma id 2: %i\n", first_id, second_id);
 
-	llist* scat_list1 = build_scatters(detector_history, first_id, NULL);
-	llist* scat_list2 = build_scatters(detector_history, second_id, NULL);
+	llist* scat_list1 = NULL;
+	llist* scat_list2 = NULL;
+	llist* full_scat_list = build_scatters(detector_history);
+	llist* crystal_list = build_crystals(full_scat_list);
+	if (CLUSTER_DEBUG) {
+		printf("crystal list: \n");
+		fmap(crystal_list, mappable_crystal_print);
+	}
+	int success = cluster_finding(crystal_list, &scat_list1, &scat_list2);
+	if (CLUSTER_DEBUG) {
+		printf("scatter list 1: \n");
+		fmap(scat_list1, mappable_print_scatter);
+		printf("scatter list 2: \n");
+		fmap(scat_list2, mappable_print_scatter);
+	}
+
+	fmap(full_scat_list, delete_scatter);
+	delete_list(full_scat_list);
+	fmap(crystal_list, free_null);
+	delete_list(crystal_list);
+	if (!success) {
+		if (scat_list1 != NULL) {
+			fmap(scat_list1, delete_scatter);
+			delete_list(scat_list1);
+		}
+		if (scat_list2 != NULL) {
+			fmap(scat_list2, delete_scatter);
+			delete_list(scat_list2);
+		}
+		return NULL;
+	}
+
 	if ((scat_list1 == NULL) || (scat_list2 == NULL)) {
 		if (scat_list1 == NULL) {
 			fmap(scat_list2, delete_scatter);
@@ -1475,7 +1719,7 @@ lor* create_lor(scatter* a, scatter* b) {
 		b_space = 0.1;
 	}
 
-	new->transverse_uncert = (a_space + b_space) / 2;
+	new->transverse_uncert = (CRYSTAL_Z_THICKNESS) * 0.5;
 	new->long_uncert = sqrt(a->time_uncert * a->time_uncert + b->time_uncert * b->time_uncert) + (a_space + b_space) / 2;
 
 	return new;
@@ -1537,7 +1781,7 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
-	energy_cutoff = strtod(argv[3], NULL);
+	double energy_cutoff = strtod(argv[3], NULL);
 
 	if ((!test_expected_energy()) || (test_vec_to_phi() != 3)) {
 		fprintf(stderr, "tests failed, exiting\n");
@@ -1643,6 +1887,9 @@ int main(int argc, char **argv) {
 
 	printf("Scattered: %u\n", scatter_counts);
 	printf("True: %u\n", true_counts);
+
+	printf("Cluster finding performace: %lf %%\n", 100. * ((float)correct_clustering / (float)total_clustering));
+
 
 	fclose(in_det_histories);
 	fclose(lor_output);
