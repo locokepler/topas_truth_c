@@ -3,7 +3,7 @@
 
 #include <stdio.h>
 
-typedef struct vec3_double {
+typedef struct _vec3_double {
 	double x;
 	double y;
 	double z;
