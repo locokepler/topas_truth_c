@@ -657,36 +657,55 @@ int in_patient(llist* list) {
 
 /*
  * find_annihilation_point
- * Takes a history and finds where the annihilation occured. If no
- * annihilation occured it returns NULL. If one did occur it returns an
- * array of doubles of length 3. This has the x,y,z position of the final
- * location of the positron
- * If it does not find an annihilation point it returns NULL
+ * Takes a history and finds where the annihilation occured assuming no IPS occured.
+ * This function does try to check to see if an IPS occured by checking to see
+ * that the energy of gamma ID 2 and ID 3 are just about 511 keV when they enter
+ * the record. The point of annihilation is determined by finding the geometric
+ * center of the two entry points and then shifting that by the timing difference,
+ * extremely simmilarly to the way the LOR building function works
  */
 vec3d find_annihilation_point(llist *history) {
 	if (history == NULL) {
 		return three_vec(NAN,NAN,NAN);
 	}
 	history = list_head(history);
-	// looks for the first event that refers to a positron
-	while (((event*)(history->data))->particle != -11) {
-		history = history->down;
-		if (history == NULL) {
-			return three_vec(NAN,NAN,NAN);
+	// looks for the first reference to a gamma that has ID 2, then first with
+	// gamma with ID 3
+	event* particle_2 = NULL;
+	event* particle_3 = NULL;
+	while (history != NULL) {
+		event* current_event = (event*)(history->data);
+		if ((current_event->id == 2) && (current_event->particle == 22) && (particle_2 == NULL)) {
+			particle_2 = current_event;
+		} else if ((current_event->id == 3) && (current_event->particle == 22) && (particle_3 == NULL)) {
+			particle_3 = current_event;
 		}
-	}
-	// now look for the last event that refers to a positron
-	while ((history->down != NULL) && (((event*)(history->down->data))->particle == -11)) {
 		history = history->down;
 	}
-	// now at the last event, return the location as a 3-vector
-	return ((event*)(history->data))->location;
+	if ((particle_2 == NULL) || (particle_3 == NULL)) {
+		return three_vec(NAN, NAN, NAN);
+	} 
+	// begin code stolen from create_lor
+	// find the vector from particle 3 to particle 2
+	vec3d center_subtraction = vec_sub(particle_2->location, particle_3->location);
+	vec3d center_half = vec_scaler(center_subtraction, 0.5);
+	// find the geometric center between the two locations
+	vec3d geometric_center = vec_add(particle_3->location, center_half);
+	// unit vector from particle 3 towards particle 2
+	vec3d ba_unit = vec_norm(center_half);
+	// difference in time between particle 3 and particle 2
+	double time_delta = particle_3->tof - particle_2->tof;
+	// displacement from geometric center by the difference in TOF
+	vec3d displacement = vec_scaler(ba_unit, SPD_LGHT * time_delta * 0.5);
+	return vec_add(geometric_center, displacement);
 }
 
 /*
  * line_to_dot_dist:
  * finds the distance from a line defined by the start and end points to a
  * given point. The distance is how far the minimum distance is.
+ * Essentially the impact factor of the line relative to the point. Useful for
+ * calculating miss distance of the LOR from the given data.
  */
 double line_to_dot_dist(vec3d start, vec3d end, vec3d point) {
 	vec3d num_first_term = vec_sub(start, end);
